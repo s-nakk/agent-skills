@@ -26,14 +26,14 @@ npx skills add s-nakk/agent-skills
 
 ### clone + symlink
 
-`~/.agents/skills` は Claude Code と Codex の両方が読むため、ここへ symlink を張れば 1 箇所で両ツールに反映される。
+Codex は `~/.agents/skills` を、Claude Code は `~/.claude/skills` を読む。`scripts/install.sh` は両方へ symlink を張るので、`git pull` 1 回で両ツールに反映される。
 
 ```bash
 git clone https://github.com/s-nakk/agent-skills.git ~/projects/agent-skills
 ~/projects/agent-skills/scripts/install.sh
 ```
 
-`scripts/install.sh` は `skills/*` を `~/.agents/skills/<name>` へ symlink する。既存の実体ディレクトリがある場合は上書きせずに報告して止まる。
+`scripts/install.sh` は `skills/*` を `~/.agents/skills/<name>` と `~/.claude/skills/<name>` へ symlink する。対象は `AGENT_SKILLS_DIRS`（`:` 区切り）で変えられる。既存の実体ディレクトリがある場合は上書きせずに報告して exit 1 で止まる。
 
 ### Skill ごとの追加設定
 
