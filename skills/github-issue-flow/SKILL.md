@@ -69,6 +69,6 @@ Do not expose implementation identifiers in the summary, cause, or fix sections 
 
 ## References
 
-- `references/issue-workflow.md`: start, triage, implementation, commit, PR, final checks, completion report
+- `references/issue-workflow.md`: start, create (single call, only when no Issue exists), triage, implementation, commit, PR, final checks, completion report
 - `assets/pr-body-template.md`: PR body skeleton
 - `references/examples.md`: anonymized examples of triage, PR bodies, and the mutation gate in practice

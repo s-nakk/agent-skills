@@ -1,6 +1,6 @@
 # agent-skills
 
-Claude Code と Codex の両方で使う、開発フロー用の自作 Skill 集。
+Claude Code と Codex の両方で使う、開発フロー用の自作 Skill 集（`compact-prep` だけは Claude Code 専用）。
 プロジェクト固有の情報は本文から外し、実例だけを各 Skill の `references/examples.md` に匿名化して残している。
 
 ## Skill 一覧
@@ -11,7 +11,7 @@ Claude Code と Codex の両方で使う、開発フロー用の自作 Skill 集
 | [`change-design-gate`](skills/change-design-gate/SKILL.md) | 変更に着手する前に、処理パイプライン図・具体例・受け入れ条件・テストケースを含む自己完結 HTML を作り、明示承認まで実装を止める | `gh`、`assets/` の HTML と台帳の雛形 |
 | [`github-issue-flow`](skills/github-issue-flow/SKILL.md) | GitHub Issue を起点に、既存 Issue を変更せず worktree 分離・SDD/TDD・検証・draft PR・独立レビューまで進める定型フロー | `gh` |
 | [`thermo-nuclear-code-quality-review`](skills/thermo-nuclear-code-quality-review/SKILL.md) | 抽象化の質、巨大ファイル化、条件分岐の増殖を極めて厳しく審査する保守性レビュー | なし |
-| [`compact-prep`](skills/compact-prep/SKILL.md) | コンテキスト圧縮の前に、採用・却下した判断と次の一手を状態ファイルへ退避する | `assets/compact-state-hook.py` を hook 登録（`references/setup.md`） |
+| [`compact-prep`](skills/compact-prep/SKILL.md) | コンテキスト圧縮の前に、採用・却下した判断と次の一手を状態ファイルへ退避する。**Claude Code 専用** | `assets/compact-state-hook.py` を hook 登録（`references/setup.md`） |
 | [`progress-report`](skills/progress-report/SKILL.md) | 期間内の git log や記憶から、クライアントに送れる箇条書きの進捗報告を生成する | 任意で [cc-mnemos](https://github.com/s-nakk/cc-mnemos) |
 
 想定する組み合わせ: `github-issue-flow` で Issue を確定 → `change-design-gate` で設計承認 → 実装 → draft PR → `independent-final-review`。`thermo-nuclear-code-quality-review` は保守性を別軸で見たい時に追加で使う。
@@ -33,12 +33,12 @@ git clone https://github.com/s-nakk/agent-skills.git ~/projects/agent-skills
 ~/projects/agent-skills/scripts/install.sh
 ```
 
-`scripts/install.sh` は `skills/*` を `~/.agents/skills/<name>` と `~/.claude/skills/<name>` へ symlink する。対象は `AGENT_SKILLS_DIRS`（`:` 区切り）で変えられる。既存の実体ディレクトリがある場合は上書きせずに報告して exit 1 で止まる。
+`scripts/install.sh` は `skills/*` を `~/.agents/skills/<name>` と `~/.claude/skills/<name>` へ symlink する。対象は `AGENT_SKILLS_DIRS`（`:` 区切り）で変えられる。既存の実体ディレクトリがある場合はそれを飛ばして報告し、最後に exit 1 を返す。
 
 ### Skill ごとの追加設定
 
 - `independent-final-review`（Codex）: `skills/independent-final-review/assets/independent-review.config.toml` を `$CODEX_HOME/independent-review.config.toml`（既定 `~/.codex/`）へコピーする。read-only sandbox と GitHub への network だけを許可する profile
-- `compact-prep`: `skills/compact-prep/references/setup.md` に従って hook を登録する
+- `compact-prep`（Claude Code のみ）: `skills/compact-prep/references/setup.md` に従って hook を登録する。Codex ではセッション ID の展開と hook がないため動かない
 - `change-design-gate`: 設計成果物の保存先（既定 `work/design-reviews/`）を各 repository の `.gitignore` または `.git/info/exclude` で Git 管理外にする
 
 ## プロジェクト固有の規約との関係
@@ -48,7 +48,7 @@ git clone https://github.com/s-nakk/agent-skills.git ~/projects/agent-skills
 ## 表記
 
 - Skill 本文と commit message は日本語。技術識別子は原文のまま
-- `github-issue-flow` の本文と手順は、`gh` の出力や GitHub の用語と対応させるため英語
+- `github-issue-flow` と `thermo-nuclear-code-quality-review` の本文は英語（前者は `gh` の出力や GitHub の用語と対応させるため、後者はレビュー文言をそのまま英語コメントに使えるようにするため）
 
 ## License
 

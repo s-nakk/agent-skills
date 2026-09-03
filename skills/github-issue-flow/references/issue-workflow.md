@@ -11,6 +11,34 @@ When the user did not specify an Issue number, list open Issues and choose the h
 Prefer the repository's priority labels (for example `priority:p0` before `priority:p1`), then incident or production labels.
 Do not change selection if the user names an Issue.
 
+## Create (only when no Issue exists)
+
+Create a new Issue only when the user asked for a change that has no Issue yet, or explicitly asked for one. Creation is a single call. After the number or URL comes back, the Issue is read-only.
+
+Body structure (Japanese, non-engineer first):
+
+```markdown
+## 背景
+<利用者に見える現象、または依頼の目的を 1〜3 文で>
+
+## 初期 scope
+- <この Issue で扱う変更>
+
+## 非 scope
+- <似ているが今回扱わない変更>
+
+## 初期受け入れ条件
+- [ ] AC-01 <前提 / 操作 / 観測できる結果>
+- [ ] AC-02 ...
+```
+
+```bash
+gh issue create --title "<利用者の言葉で 1 行>" --body-file <path> --label <repository の規約に沿った label>
+gh issue view <issue-number> --json number,title,url,state
+```
+
+Record the number and URL from the `gh issue view` output. Do not edit the Issue afterwards to add findings, refined acceptance criteria, or links. Later refinements go to the design artifact (for example `change-design-gate`), the PR body, and the completion report.
+
 ## Triage
 
 Collect current facts before editing.

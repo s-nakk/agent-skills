@@ -6,6 +6,7 @@ description: >-
   固定フォーマットで記録し、圧縮後の文脈喪失（却下案の再提案、検証前デプロイ、作業ログと作業指示の混同）を防ぐ。
   ユーザーが /compact を実行しようとしている時、コンテキスト使用率の警告（context-usage-warning）が
   注入された時、「圧縮の準備をして」「状態を保存して」と言われた時に必ず使う。
+  Claude Code 専用（セッション ID の展開と hook 連携が Claude Code の仕組みに依存する）。
 argument-hint: ""
 allowed-tools:
   - Read
@@ -24,6 +25,7 @@ allowed-tools:
 
 ## 前提
 
+- **Claude Code 専用。** セッション ID の展開（`${CLAUDE_SESSION_ID}`）と圧縮後の hook 連携が Claude Code の仕組みに依存するため、Codex など他ツールでは Step 1 のハードゲートで中止する。他ツールで同等の運用をする場合は、そのツールのセッション ID 取得手段と hook 相当を別途定義する
 - 状態ファイルの保存先は `COMPACT_STATE_DIR` 環境変数、未設定なら `~/.claude/compact-state`
 - 圧縮後の自動読み込みは `assets/compact-state-hook.py` を hook として登録することで動く。登録手順は `references/setup.md`
 - セッション ID は実行環境が提供する変数から取る。Claude Code では `${CLAUDE_SESSION_ID}`

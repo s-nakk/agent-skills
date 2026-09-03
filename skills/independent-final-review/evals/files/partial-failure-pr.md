@@ -1,6 +1,6 @@
 # PRの差分
 
-同じPRで `relation_subject_indices` をschemaの必須fieldとして新設し、仕様書も必須へ更新しています。
+同じPRで `group_subject_indices` をschemaの必須fieldとして新設し、仕様書も必須へ更新しています。
 
 parserは一つでもfield欠落があると `UnderstandingFailure.Structural` を返し、call siteは質問理解全体をfallback回答へ送ります。
 
@@ -11,7 +11,7 @@ parserは一つでもfield欠落があると `UnderstandingFailure.Structural` �
 {
   "question_groups": [
     { "question": "A院とB院は提携していますか" },
-    { "question": "支払い方法を教えて", "relation_subject_indices": [] }
+    { "question": "支払い方法を教えて", "group_subject_indices": [] }
   ]
 }
 ```

@@ -1,4 +1,6 @@
-# セットアップ
+# セットアップ（Claude Code）
+
+この Skill と hook は Claude Code 専用。Codex には対応する hook イベントとセッション ID の展開がないため動かない。
 
 `compact-prep` は状態ファイルを書くだけで、圧縮後の読み込み指示は hook が担う。
 `assets/compact-state-hook.py` を任意の場所（例: `~/.claude/hooks/compact-state-hook.py`）へ置き、Claude Code の `~/.claude/settings.json` に次を追加する。
