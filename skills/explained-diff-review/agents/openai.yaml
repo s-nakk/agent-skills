@@ -1,0 +1,4 @@
+interface:
+  display_name: "Explained Diff Review"
+  short_description: "Review explained changes, ordered top-down with an impact map, and approve an exact snapshot"
+  default_prompt: "Use $explained-diff-review to present the completed changes for my review."
