@@ -1,0 +1,50 @@
+{
+  "skill_name": "independent-final-review",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "添付のpartial-failure-base.mdとpartial-failure-pr.mdだけを一次資料としてPRをレビューして。",
+      "expected_output": "変更前から存在する質問グループ独立契約と混在fixtureを根拠に、同じPRで追加したschemaとの整合だけで入力全体をfallbackさせる差分をregressionとして検出する。現在と修正後の失敗単位を比較し、不正グループだけを隔離して正常グループの回答を維持する修正方向を示す。",
+      "files": [
+        "evals/files/partial-failure-base.md",
+        "evals/files/partial-failure-pr.md"
+      ],
+      "expectations": [
+        "同じPR内のschema、仕様、testの循環参照だけでblockerを作らない",
+        "現在と提案修正後の失敗単位を比較する",
+        "一つだけfield欠落で独立した正常グループがある反例を確認する",
+        "正常グループの出力を失う修正方向を提示しない",
+        "変更前から存在するグループ独立契約を一次根拠にする"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "同じreviewer sessionで差分再レビューする。添付のpartial-failure-base.md、previous-finding.md、partial-failure-rereview-diff.mdだけを一次資料として判定して。",
+      "expected_output": "前回findingとの表面的な整合だけで承認せず、対応差分が変更前のグループ独立契約を破り、局所不備を入力全体へ波及させた直接regressionとして検出する。最小の失敗単位と正常グループの維持を示し、全体fallbackを解消案として維持しない。",
+      "files": [
+        "evals/files/partial-failure-base.md",
+        "evals/files/previous-finding.md",
+        "evals/files/partial-failure-rereview-diff.md"
+      ],
+      "expectations": [
+        "前回findingの解消確認より先に対応差分の利用者向けregressionを確認する",
+        "局所不備から入力全体への失敗範囲拡大を検出する",
+        "独立した正常グループの成功経路を維持する修正方向を示す",
+        "同じPRのschema整合だけで全体fallbackを正当化しない"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "添付のatomic-operation-pr.mdだけを一次資料としてPRをレビューして。",
+      "expected_output": "変更前から存在する原子性契約を根拠に、1行のvalidation失敗でtransaction全体を未反映にする実装を承認する。正常な兄弟要素を維持する一般則を過適用して部分commitを要求しない。",
+      "files": [
+        "evals/files/atomic-operation-pr.md"
+      ],
+      "expectations": [
+        "部分成功を常に優先せず、変更前から存在する原子性契約を採用する",
+        "一部不正時の全体未反映をregression扱いしない",
+        "部分commitを修正方向として提示しない"
+      ]
+    }
+  ]
+}

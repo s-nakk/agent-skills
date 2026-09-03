@@ -1,0 +1,13 @@
+default_permissions = "independent-review"
+approval_policy = "never"
+
+[permissions.independent-review]
+description = "Read-only independent review with GitHub network access."
+extends = ":read-only"
+
+[permissions.independent-review.network]
+enabled = true
+
+[permissions.independent-review.network.domains]
+"**.github.com" = "allow"
+"**.githubusercontent.com" = "allow"

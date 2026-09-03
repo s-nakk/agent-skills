@@ -1,0 +1,4 @@
+interface:
+  display_name: "Thermo-Nuclear Code Quality Review"
+  short_description: "抽象化・巨大ファイル・条件分岐増殖を極めて厳しく審査する"
+  default_prompt: "Use $thermo-nuclear-code-quality-review to run an extremely strict maintainability review of the current branch's changes."

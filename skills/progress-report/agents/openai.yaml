@@ -1,0 +1,4 @@
+interface:
+  display_name: "Progress Report"
+  short_description: "期間内の作業をクライアント向け箇条書きに翻訳する"
+  default_prompt: "Use $progress-report to produce a client-facing progress report for the given period from git log, memory, and session history."

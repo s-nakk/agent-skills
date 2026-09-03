@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Issue Flow"
+  short_description: "既存 Issue を変更せず draft PR まで進める定型フロー"
+  default_prompt: "Use $github-issue-flow to handle this GitHub Issue read-only and prepare a linked draft PR."

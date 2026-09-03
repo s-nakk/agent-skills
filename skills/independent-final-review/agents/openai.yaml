@@ -1,0 +1,4 @@
+interface:
+  display_name: "Independent Final Review"
+  short_description: "初回は新規、再レビューは同じセッションでリスク重み付き検証"
+  default_prompt: "Use $independent-final-review to perform risk-weighted adversarial verification of an open draft or ready PR, a fixed commit snapshot, or local-only exact paths."

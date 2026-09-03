@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "issue": {
+    "number": "{{ISSUE_NUMBER}}",
+    "url": "{{ISSUE_URL}}"
+  },
+  "status_authority": "index.json",
+  "current_version": "design-v1",
+  "status": "awaiting_approval",
+  "versions": [
+    {
+      "version": "design-v1",
+      "file": "design-v1.html",
+      "created_at": "{{CREATED_AT}}",
+      "status": "awaiting_approval",
+      "supersedes": null,
+      "approved_at": null
+    }
+  ]
+}
