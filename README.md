@@ -12,7 +12,6 @@ Claude Code と Codex の両方で使う、開発フロー用の自作 Skill 集
 | [`github-issue-flow`](skills/github-issue-flow/SKILL.md) | GitHub Issue を起点に、既存 Issue を変更せず worktree 分離・SDD/TDD・検証・draft PR・独立レビューまで進める定型フロー | `gh` |
 | [`thermo-nuclear-code-quality-review`](skills/thermo-nuclear-code-quality-review/SKILL.md) | 抽象化の質、巨大ファイル化、条件分岐の増殖を極めて厳しく審査する保守性レビュー | なし |
 | [`compact-prep`](skills/compact-prep/SKILL.md) | コンテキスト圧縮の前に、採用・却下した判断と次の一手を状態ファイルへ退避する。**Claude Code 専用** | `assets/compact-state-hook.py` を hook 登録（`references/setup.md`） |
-| [`progress-report`](skills/progress-report/SKILL.md) | 期間内の git log や記憶から、クライアントに送れる箇条書きの進捗報告を生成する | 任意で [cc-mnemos](https://github.com/s-nakk/cc-mnemos) |
 
 想定する組み合わせ: `github-issue-flow` で Issue を確定 → `change-design-gate` で設計承認 → 実装 → draft PR → `independent-final-review`。`thermo-nuclear-code-quality-review` は保守性を別軸で見たい時に追加で使う。
 
