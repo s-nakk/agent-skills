@@ -84,6 +84,8 @@ Show one concise overall summary followed by the impact map and the change group
 
 Approval checkboxes and comments stay local until the user sends them. Checking a box updates the visible progress, the approval marker on the group's map nodes, and the group strip above the groups.
 
+Comments come in two forms. Each group has a general comment box under its diff. Each diff line also accepts a line comment: hovering a line number shows a + button that opens a comment box directly under that line (under the before or the after column in the two-column layout), the way a pull request review does; the box names the file and the line, keeps its text while the reader moves between groups, and has a remove button. A hunk that holds a line comment opens automatically when it is rendered again.
+
 The screen offers a focus mode. Selecting a map node or a group in the strip shows that group alone below the map, with Previous, Next, and Show all controls; Previous and Next follow the top-down order. Summary, checks, blockers, and the map stay visible, every group keeps its own approval checkbox, and the snapshot approval still requires every group, so focusing never hides an unreviewed group from the final decision. A diff layout toggle switches all hunks between two columns and one column; it follows the width by default and keeps an explicit choice across re-renders.
 
 On the standalone page the group list sits in the left pane under the map, with すべて表示 (Show all) as its first entry, and selecting a list entry or a map node replaces the right pane. With nothing selected the right pane starts with the overview (summary, checks, snapshot details) followed by every group.
@@ -111,10 +113,13 @@ The decoded object has exactly this shape:
   "expected_groups": ["<group slug>"],
   "approved_groups": ["<group slug>"],
   "comments": [
-    { "group": "<group slug>", "body": "<arbitrary Unicode text>" }
+    { "group": "<group slug>", "body": "<arbitrary Unicode text>" },
+    { "group": "<group slug>", "body": "<arbitrary Unicode text>", "path": "<changed file>", "hunk": "<hunk id>", "side": "old | new", "line": 12 }
   ]
 }
 ```
+
+A comment without an anchor is the group's general comment. A line comment carries all four anchor keys: the file, the hunk id from the snapshot, the side (`old` for the before column, `new` for the after column), and the line number on that side. `verify` rejects an anchor that is incomplete or that names a line the snapshot diff does not show. Comments are ordered by group, then by hunk, then by line.
 
 `expected_groups` always carries the full group set, also in split-review fragments. Sending is a message to the conversation, not a repository or external-service mutation; the widget says so under the buttons.
 

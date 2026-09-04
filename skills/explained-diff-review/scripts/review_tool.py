@@ -788,6 +788,41 @@ def decode_payload(text: str) -> dict:
         return {}
 
 
+ANCHOR_KEYS = ("path", "hunk", "side", "line")
+SIDES = ("old", "new")
+
+
+def validate_line_anchor(c: dict, errors: list[str]) -> None:
+    """Validate the optional line anchor of a comment: all four keys together, or none."""
+    present = [k for k in ANCHOR_KEYS if k in c]
+    if not present:
+        return
+    if len(present) != len(ANCHOR_KEYS):
+        errors.append("a line comment needs path, hunk, side, and line together")
+        return
+    if not isinstance(c["path"], str) or not c["path"]:
+        errors.append("line comment path must be a non-empty string")
+    if not isinstance(c["hunk"], str) or not isinstance(c["path"], str) or not c["hunk"].startswith(c["path"] + "#"):
+        errors.append("line comment hunk must be a hunk id of the same path")
+    if c["side"] not in SIDES:
+        errors.append(f"line comment side must be old or new: {c['side']!r}")
+    if isinstance(c["line"], bool) or not isinstance(c["line"], int) or c["line"] < 1:
+        errors.append("line comment line must be a positive integer")
+
+
+def anchored_lines(snapshot: dict) -> set[tuple[str, str, int]]:
+    """Every (hunk id, side, line) a reader can comment on: the lines shown in the snapshot diff."""
+    lines: set[tuple[str, str, int]] = set()
+    for f in snapshot["files"]:
+        for hk in f["hunks"]:
+            for row in hk["rows"]:
+                if row[1] is not None:
+                    lines.add((hk["id"], "old", row[1]))
+                if row[2] is not None:
+                    lines.add((hk["id"], "new", row[2]))
+    return lines
+
+
 def validate_payload(p: dict, errors: list[str]) -> None:
     if p.get("schema_version") != SCHEMA_VERSION:
         errors.append(f"unsupported schema_version: {p.get('schema_version')}")
@@ -814,8 +849,10 @@ def validate_payload(p: dict, errors: list[str]) -> None:
         for c in comments:
             if not isinstance(c, dict) or not isinstance(c.get("group"), str) or not isinstance(c.get("body"), str) or not c["body"].strip():
                 errors.append("each comment needs a group slug and a non-empty body")
-            elif isinstance(p.get("expected_groups"), list) and c["group"] not in p["expected_groups"]:
+                continue
+            if isinstance(p.get("expected_groups"), list) and c["group"] not in p["expected_groups"]:
                 errors.append(f"comment refers to a group outside expected_groups: {c['group']}")
+            validate_line_anchor(c, errors)
     if p.get("review_action") == "request_changes" and isinstance(comments, list) and not comments:
         errors.append("request_changes requires at least one comment")
 
@@ -853,6 +890,10 @@ def cmd_verify(args: argparse.Namespace) -> int:
     result["missing_groups"] = sorted(set(expected) - set(payload["approved_groups"]))
     result["unresolved_blockers"] = blockers
     result["comments"] = payload["comments"]
+    known_lines = anchored_lines(snapshot)
+    for c in payload["comments"]:
+        if "hunk" in c and (c["hunk"], c["side"], c["line"]) not in known_lines:
+            result["errors"].append(f"line comment refers to a line outside the snapshot diff: {c['hunk']} {c['side']} {c['line']}")
     if not result["repository_match"]:
         result["errors"].append("payload repository does not match the snapshot repository")
     if not result["expected_groups_match"]:
