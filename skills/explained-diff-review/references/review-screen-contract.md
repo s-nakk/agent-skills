@@ -33,12 +33,11 @@ When git is not the source of the reviewed changes, define an equivalent manifes
 
 ## review.json
 
-Author this file after reading the governing request, acceptance criteria, final diff, test assertions, check results, and reviewer findings. Write prose in the conversation language by default. When the audience mixes languages, declare `languages` and write each prose field in both languages; the screen then switches prose together with its fixed labels.
+Author this file after reading the governing request, acceptance criteria, final diff, test assertions, check results, and reviewer findings. Write prose in the language the invocation asks for (the conversation language by default) and set `locale` to match; the screen does not translate.
 
 | Field | Content |
 |---|---|
-| `locale` | `ja` or `en`. Selects the initial language; readers can switch between 日本語 and English at any time with the toggle in the header |
-| `languages` | Optional. `["ja", "en"]` declares a bilingual review: every prose field must then be a language object `{"ja": "...", "en": "..."}` with both texts (a list of paragraphs is allowed inside `summary` and the group texts), and any plain string containing Japanese is rejected. Language-neutral strings such as paths, symbols, and check names like `lint` may stay plain. Without `languages`, prose fields are plain strings in the `locale` language |
+| `locale` | `ja` or `en`. Selects the language of the fixed labels (headings, statuses, button captions, the human-readable line of each action). Prose fields are plain strings, or lists of strings where paragraphs are allowed, written in the same language |
 | `title` | Task title shown in the header |
 | `summary` | One string or a list of paragraphs. Overall outcome first, then deploy or data notes that apply to the whole change |
 | `checks[]` | `{name, status, detail?}` with `status` in `passed`, `failed`, `not_run`, `out_of_scope`. Include only checks that were actually run or explicitly skipped |
@@ -94,8 +93,6 @@ The three actions are:
 - レビュー結果を送信 (Send review): sends all group approvals and non-empty comments
 - 修正を依頼 (Request changes): sends the current non-empty comments without approving; the widget refuses to send without a comment and shows an accessible message
 - 全体を承認 (Approve snapshot): enabled only when every group is checked and no unresolved blocker is shown
-
-A single-language screen also shows 翻訳版を依頼 (Request translation). It sends a `submit_review` payload whose human-readable line ends with `add_language: <code>` for the missing language, so the current approvals and comments travel with the request and the regenerated screen can restore them. A bilingual screen does not show the button.
 
 Each action delivers, through the host return channel or the page's copy box, a human-readable line that states counts and the action, never raw comments, followed by one machine-readable line:
 

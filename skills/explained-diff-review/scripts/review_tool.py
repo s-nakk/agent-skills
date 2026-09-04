@@ -413,20 +413,10 @@ def load_json(path: str) -> dict:
         return {}
 
 
-LANGS = ("ja", "en")
-CJK_RE = re.compile(r"[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]")
+def check_text(value, where: str, errors: list[str], allow_list: bool = True) -> None:
+    """Validate a prose field: a plain string, or (where allowed) a list of strings.
 
-
-def review_languages(review: dict) -> list[str]:
-    langs = review.get("languages")
-    return list(langs) if langs else [review.get("locale", "ja")]
-
-
-def check_text(value, where: str, errors: list[str], languages: list[str], allow_list: bool = True) -> None:
-    """Validate a prose field: a string, a {ja, en} object, or (where allowed) a list of those.
-
-    In a bilingual review every object must carry every language, and plain strings may not be
-    Japanese-only, because they would stay untranslated when the reader switches languages.
+    Prose is written once, in the language selected by `locale`; the screen does not translate.
     """
     if value is None:
         return
@@ -435,64 +425,40 @@ def check_text(value, where: str, errors: list[str], languages: list[str], allow
             errors.append(f"{where}: a list is not allowed here")
             return
         for i, item in enumerate(value):
-            check_text(item, f"{where}[{i}]", errors, languages, allow_list=False)
-        return
-    bilingual = len(set(languages)) > 1
-    if isinstance(value, dict):
-        unknown = set(value) - set(LANGS)
-        if unknown:
-            errors.append(f"{where}: unknown language keys {sorted(unknown)}")
-        for lang, text in value.items():
-            items = text if isinstance(text, list) else [text]
-            if any(not isinstance(item, str) for item in items):
-                errors.append(f"{where}.{lang}: must be a string or a list of strings")
-        for lang in languages:
-            if not value.get(lang):
-                errors.append(f"{where}: missing {lang} text")
+            check_text(item, f"{where}[{i}]", errors, allow_list=False)
         return
     if not isinstance(value, str):
-        errors.append(f"{where}: must be a string or a language object")
-        return
-    if bilingual and CJK_RE.search(value):
-        errors.append(f'{where}: Japanese-only text in a bilingual review; write it as {{"ja": ..., "en": ...}}')
+        errors.append(f"{where}: must be a string")
 
 
 def validate_texts(review: dict, errors: list[str]) -> None:
-    langs = review.get("languages")
-    if langs is not None:
-        if not isinstance(langs, list) or not langs or any(lang not in LANGS for lang in langs):
-            errors.append("languages must be a non-empty list drawn from ja and en")
-            return
-        if review.get("locale", "ja") not in langs:
-            errors.append("locale must be one of languages")
-    languages = review_languages(review)
-    check_text(review.get("title"), "title", errors, languages, allow_list=False)
-    check_text(review.get("summary"), "summary", errors, languages)
-    check_text(review.get("identity_note"), "identity_note", errors, languages, allow_list=False)
+    check_text(review.get("title"), "title", errors, allow_list=False)
+    check_text(review.get("summary"), "summary", errors)
+    check_text(review.get("identity_note"), "identity_note", errors, allow_list=False)
     for i, c in enumerate(review.get("checks", []) or []):
-        check_text(c.get("name"), f"checks[{i}].name", errors, languages, allow_list=False)
-        check_text(c.get("detail"), f"checks[{i}].detail", errors, languages, allow_list=False)
+        check_text(c.get("name"), f"checks[{i}].name", errors, allow_list=False)
+        check_text(c.get("detail"), f"checks[{i}].detail", errors, allow_list=False)
     for i, b in enumerate(review.get("blockers", []) or []):
-        check_text(b.get("title"), f"blockers[{i}].title", errors, languages, allow_list=False)
-        check_text(b.get("detail"), f"blockers[{i}].detail", errors, languages, allow_list=False)
+        check_text(b.get("title"), f"blockers[{i}].title", errors, allow_list=False)
+        check_text(b.get("detail"), f"blockers[{i}].detail", errors, allow_list=False)
     m = review.get("map") or {}
     for n in m.get("nodes", []) or []:
-        check_text(n.get("label"), f"map.nodes[{n.get('id')}].label", errors, languages, allow_list=False)
-        check_text(n.get("note"), f"map.nodes[{n.get('id')}].note", errors, languages, allow_list=False)
+        check_text(n.get("label"), f"map.nodes[{n.get('id')}].label", errors, allow_list=False)
+        check_text(n.get("note"), f"map.nodes[{n.get('id')}].note", errors, allow_list=False)
     for i, e in enumerate(m.get("edges", []) or []):
-        check_text(e.get("kind"), f"map.edges[{i}].kind", errors, languages, allow_list=False)
-        check_text(e.get("label"), f"map.edges[{i}].label", errors, languages, allow_list=False)
+        check_text(e.get("kind"), f"map.edges[{i}].kind", errors, allow_list=False)
+        check_text(e.get("label"), f"map.edges[{i}].label", errors, allow_list=False)
     for g in review.get("groups", []) or []:
         slug = g.get("slug")
         for key in ("title", "outcome", "why", "contract", "before", "after", "scope", "risk", "impact"):
-            check_text(g.get(key), f"groups[{slug}].{key}", errors, languages, allow_list=key != "title")
+            check_text(g.get(key), f"groups[{slug}].{key}", errors, allow_list=key != "title")
         for i, ev in enumerate(g.get("evidence", []) or []):
-            check_text(ev.get("name"), f"groups[{slug}].evidence[{i}].name", errors, languages, allow_list=False)
-            check_text(ev.get("detail"), f"groups[{slug}].evidence[{i}].detail", errors, languages, allow_list=False)
+            check_text(ev.get("name"), f"groups[{slug}].evidence[{i}].name", errors, allow_list=False)
+            check_text(ev.get("detail"), f"groups[{slug}].evidence[{i}].detail", errors, allow_list=False)
         for i, fd in enumerate(g.get("findings", []) or []):
-            check_text(fd.get("title"), f"groups[{slug}].findings[{i}].title", errors, languages, allow_list=False)
-            check_text(fd.get("detail"), f"groups[{slug}].findings[{i}].detail", errors, languages, allow_list=False)
-        check_text(g.get("limitations"), f"groups[{slug}].limitations", errors, languages)
+            check_text(fd.get("title"), f"groups[{slug}].findings[{i}].title", errors, allow_list=False)
+            check_text(fd.get("detail"), f"groups[{slug}].findings[{i}].detail", errors, allow_list=False)
+        check_text(g.get("limitations"), f"groups[{slug}].limitations", errors)
 
 
 def validate_review(review: dict, snapshot: dict, errors: list[str], warnings: list[str]) -> None:
@@ -571,8 +537,7 @@ def validate_review(review: dict, snapshot: dict, errors: list[str], warnings: l
         if n.get("group") and n["group"] not in seen:
             errors.append(f"map node {nid} refers to unknown group: {n.get('group')}")
         note = n.get("note")
-        note_texts = list(note.values()) if isinstance(note, dict) else ([note] if note else [])
-        if any(isinstance(t, str) and len(t) > 40 for t in note_texts):
+        if isinstance(note, str) and len(note) > 40:
             warnings.append(f"map node {nid} note is long; keep notes to a few words")
     for e in edges:
         if e.get("from") not in node_ids or e.get("to") not in node_ids:
@@ -701,7 +666,6 @@ def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment
     return {
         "schema_version": SCHEMA_VERSION,
         "locale": locale,
-        "languages": review_languages(review),
         "layout": layout,
         "fragment": fragment,
         "snapshot": {
@@ -731,14 +695,6 @@ def serialize_for_script(data: dict) -> str:
     return text.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
 
 
-def display_title(review: dict) -> str:
-    """Resolve the task title in the review locale for the standalone page's document title."""
-    title = review.get("title", "")
-    if isinstance(title, dict):
-        title = title.get(review.get("locale", "ja"), "")
-    return str(title)
-
-
 PAGE_PLACEHOLDER_RE = re.compile("|".join(re.escape(p) for p in (PAGE_TITLE_PLACEHOLDER, PAGE_LANG_PLACEHOLDER, PAGE_BODY_PLACEHOLDER)))
 
 
@@ -755,7 +711,7 @@ def wrap_page(fragment_html: str, review: dict, wrapper_path: str) -> str:
         if wrapper.count(placeholder) != 1:
             fail(f"page template must contain {placeholder} exactly once")
     values = {
-        PAGE_TITLE_PLACEHOLDER: html_escape(display_title(review), quote=True),
+        PAGE_TITLE_PLACEHOLDER: html_escape(str(review.get("title", "")), quote=True),
         PAGE_LANG_PLACEHOLDER: html_escape(review.get("locale", "ja"), quote=True),
         PAGE_BODY_PLACEHOLDER: fragment_html,
     }
