@@ -3,7 +3,8 @@
 
 Subcommands:
   snapshot  Capture the deterministic review manifest and the contextual diff of a git repository.
-  build     Validate the authored review JSON, bind it to the snapshot, and emit the widget HTML.
+  build     Validate the authored review JSON, bind it to the snapshot, and emit the widget HTML
+            (an inline fragment by default, or a standalone two-pane page with --layout page).
   verify    Validate a follow-up payload against the current repository state.
 
 Standard library only. Requires git on PATH.
@@ -21,6 +22,7 @@ import stat
 import subprocess
 import sys
 from datetime import datetime
+from html import escape as html_escape
 from pathlib import Path
 
 SCHEMA_VERSION = 1
@@ -30,6 +32,7 @@ ACTIONS = ("request_changes", "submit_review", "approve_snapshot")
 CHECK_STATUSES = ("passed", "failed", "not_run", "out_of_scope")
 NODE_STATUSES = ("modified", "added", "deleted", "renamed", "unchanged")
 FRAGMENT_KINDS = ("full", "index", "group", "final")
+LAYOUTS = ("widget", "page")
 MAP_NODE_BUDGET = 16
 MAP_EDGE_BUDGET = 24
 EXCERPT_MAX_LINES = 120
@@ -37,6 +40,9 @@ EXCERPT_MAX_LINES = 120
 LAYER_SKIP_WARN = 20
 NON_CODE_RANK = 70
 PLACEHOLDER = "__REVIEW_DATA_JSON__"
+PAGE_TITLE_PLACEHOLDER = "__REVIEW_TITLE__"
+PAGE_LANG_PLACEHOLDER = "__REVIEW_LANG__"
+PAGE_BODY_PLACEHOLDER = "__REVIEW_WIDGET_HTML__"
 
 # key, rank, Japanese label, English label. Rank orders layers from the entry point toward storage.
 LAYERS = [
@@ -629,7 +635,7 @@ def compose_map(review: dict, snapshot: dict) -> dict:
     return {"nodes": nodes_out, "edges": map_in.get("edges", []) or []}
 
 
-def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment: dict, only_groups: list[str] | None, approved: list[str]) -> dict:
+def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment: dict, only_groups: list[str] | None, approved: list[str], layout: str) -> dict:
     locale = review.get("locale", "ja")
     header = snapshot["header"]
     file_info = {f["path"]: f for f in review.get("files", [])}
@@ -696,6 +702,7 @@ def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment
         "schema_version": SCHEMA_VERSION,
         "locale": locale,
         "languages": review_languages(review),
+        "layout": layout,
         "fragment": fragment,
         "snapshot": {
             "id": snapshot_id,
@@ -724,6 +731,37 @@ def serialize_for_script(data: dict) -> str:
     return text.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
 
 
+def display_title(review: dict) -> str:
+    """Resolve the task title in the review locale for the standalone page's document title."""
+    title = review.get("title", "")
+    if isinstance(title, dict):
+        title = title.get(review.get("locale", "ja"), "")
+    return str(title)
+
+
+PAGE_PLACEHOLDER_RE = re.compile("|".join(re.escape(p) for p in (PAGE_TITLE_PLACEHOLDER, PAGE_LANG_PLACEHOLDER, PAGE_BODY_PLACEHOLDER)))
+
+
+def wrap_page(fragment_html: str, review: dict, wrapper_path: str) -> str:
+    """Embed the built fragment in the standalone document wrapper.
+
+    The wrapper carries only document-level markup and the control baseline a host would
+    otherwise provide; every review element is still created by the fixed widget script.
+    All placeholders are substituted in one pass so that inserted text (the title, or review
+    data inside the fragment) is never rescanned for another placeholder.
+    """
+    wrapper = Path(wrapper_path).read_text(encoding="utf-8")
+    for placeholder in (PAGE_TITLE_PLACEHOLDER, PAGE_LANG_PLACEHOLDER, PAGE_BODY_PLACEHOLDER):
+        if wrapper.count(placeholder) != 1:
+            fail(f"page template must contain {placeholder} exactly once")
+    values = {
+        PAGE_TITLE_PLACEHOLDER: html_escape(display_title(review), quote=True),
+        PAGE_LANG_PLACEHOLDER: html_escape(review.get("locale", "ja"), quote=True),
+        PAGE_BODY_PLACEHOLDER: fragment_html,
+    }
+    return PAGE_PLACEHOLDER_RE.sub(lambda m: values[m.group(0)], wrapper)
+
+
 def compute_snapshot_id(snapshot: dict, review: dict) -> str:
     params = snapshot["params"]
     groups = [g["slug"] for g in review.get("groups", [])]
@@ -748,6 +786,8 @@ def cmd_build(args: argparse.Namespace) -> int:
     for w in warnings:
         print("warning: " + w, file=sys.stderr)
     snapshot_id = compute_snapshot_id(snapshot, review)
+    if args.layout == "page" and args.fragment != "full":
+        fail("--layout page renders the whole review on one page; split reviews are for the inline widget only")
     fragment = {"kind": args.fragment}
     if args.fragment == "group":
         if not args.groups:
@@ -760,14 +800,18 @@ def cmd_build(args: argparse.Namespace) -> int:
     for s in (only or []) + approved:
         if s not in known:
             fail(f"unknown group slug in options: {s}")
-    data = compose_widget_data(review, snapshot, snapshot_id, fragment, only, approved)
-    template_path = args.template or str(Path(__file__).resolve().parent.parent / "assets" / "review-widget.html")
+    data = compose_widget_data(review, snapshot, snapshot_id, fragment, only, approved, args.layout)
+    assets = Path(__file__).resolve().parent.parent / "assets"
+    template_path = args.template or str(assets / "review-widget.html")
     template = Path(template_path).read_text(encoding="utf-8")
     if template.count(PLACEHOLDER) != 1:
         fail(f"template must contain {PLACEHOLDER} exactly once")
     html = template.replace(PLACEHOLDER, serialize_for_script(data))
-    Path(args.out).write_text(html, encoding="utf-8")
-    print(json.dumps({"out": args.out, "snapshot_id": snapshot_id, "short_id": snapshot_id[:12], "fragment": fragment, "group_order": [g["slug"] for g in data["groups"]], "bytes": len(html.encode("utf-8")), "warnings": warnings}, ensure_ascii=False, indent=1))
+    if args.layout == "page":
+        html = wrap_page(html, review, args.page_template or str(assets / "review-page.html"))
+    out_path = Path(args.out)
+    out_path.write_text(html, encoding="utf-8")
+    print(json.dumps({"out": args.out, "absolute": str(out_path.resolve()), "layout": args.layout, "snapshot_id": snapshot_id, "short_id": snapshot_id[:12], "fragment": fragment, "group_order": [g["slug"] for g in data["groups"]], "bytes": len(html.encode("utf-8")), "warnings": warnings}, ensure_ascii=False, indent=1))
     return 0
 
 
@@ -896,6 +940,8 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--snapshot", required=True)
     b.add_argument("--review", required=True)
     b.add_argument("--template", help="widget template (default: assets/review-widget.html next to this script)")
+    b.add_argument("--layout", choices=LAYOUTS, default="widget", help="widget: inline fragment for the host surface (default); page: standalone two-pane HTML document")
+    b.add_argument("--page-template", help="document wrapper for --layout page (default: assets/review-page.html next to this script)")
     b.add_argument("--fragment", choices=FRAGMENT_KINDS, default="full")
     b.add_argument("--groups", help="comma-separated slugs included in a group fragment")
     b.add_argument("--index", type=int, help="fragment position (1-based)")

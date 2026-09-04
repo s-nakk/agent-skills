@@ -1,13 +1,13 @@
 # Review screen contract
 
-Use this contract when building the inline review screen. The screen is rendered by the fixed template in `assets/review-widget.html`; you author only the review data, and `scripts/review_tool.py` binds it to the repository snapshot and emits the widget HTML.
+Use this contract when building the review screen, inline or as a standalone page. The screen is rendered by the fixed template in `assets/review-widget.html`; you author only the review data, and `scripts/review_tool.py` binds it to the repository snapshot and emits the widget HTML, optionally wrapped in `assets/review-page.html`.
 
 ## Surface
 
 - The screen is an inline HTML widget rendered by the host's visualization surface. On Claude Code that is the `show_widget` tool of the `visualize` MCP server, which receives the built HTML as `widget_code` and exposes a `sendPrompt(text)` global. On Codex that is the bundled `visualize` skill, which renders the built HTML file referenced by a `visualize{"path":...}` line and exposes `window.openai.sendFollowUpMessage({ prompt, title })`. The template detects which return channel exists, so the same file works on both hosts.
 - Claude Code requires one `read_me` call before the first `show_widget` call in a session; call it with `modules: ["interactive"]`. Codex requires loading its `visualize` skill first. The template already follows both hosts' design rules, so do not restyle the widget from that guidance.
 - The widget fills the host width: 680 px on Claude Code, 736 px or 1,024 px in wide mode on Codex. The template keeps the before and after columns side by side above 560 px and stacks each hunk (before first, after second) below that.
-- Do not use an Artifact or a standalone file link for the approval step. Neither has a return channel for structured approvals.
+- `build --layout page` emits the same review as a standalone document (`assets/review-page.html` around the fragment) for when the inline width is not enough: a top bar, a left pane with the impact map, a vertical group list, and unresolved blockers, and a right pane with the overview or the selected group. The map is laid out at the left pane's real width, and the diff columns follow the right pane's width. The page has no host return channel, so each action shows its message with a copy button for the user to paste into the conversation; the payload is identical. Do not use an Artifact or any other page for the approval step, because only these two surfaces produce the payload that `verify` checks.
 
 ## Working files and commands
 
@@ -15,11 +15,11 @@ Keep `snapshot.json`, `review.json`, and `widget.html` in the session scratchpad
 
 ```text
 python <skill>/scripts/review_tool.py snapshot --repo <path> --base <rev> [--untracked <repo-relative path>]... [--context 6] [--function-context] --out snapshot.json
-python <skill>/scripts/review_tool.py build --snapshot snapshot.json --review review.json --out widget.html [--fragment full|index|group|final] [--groups a,b] [--index n --total m] [--approved a,b]
+python <skill>/scripts/review_tool.py build --snapshot snapshot.json --review review.json --out widget.html [--layout widget|page] [--fragment full|index|group|final] [--groups a,b] [--index n --total m] [--approved a,b]
 python <skill>/scripts/review_tool.py verify --payload-file message.txt --snapshot snapshot.json --review review.json
 ```
 
-`snapshot` prints the hunk ids you reference from `review.json`. `build` validates the review, refuses to run if the repository changed since the snapshot, sorts groups and hunks top-down, and writes the widget. `verify` decodes a follow-up payload, validates its schema, recomputes the snapshot id, and prints a decision.
+`snapshot` prints the hunk ids you reference from `review.json`. `build` validates the review, refuses to run if the repository changed since the snapshot, sorts groups and hunks top-down, and writes the widget; with `--layout page` it writes the standalone document instead and prints its `absolute` path, and it refuses any `--fragment` other than `full`. `verify` decodes a follow-up payload, validates its schema, recomputes the snapshot id, and prints a decision.
 
 ## Snapshot identity
 
@@ -87,6 +87,8 @@ Approval checkboxes and comments stay local until the user sends them. Checking 
 
 The screen offers a focus mode. Selecting a map node or a group in the strip shows that group alone below the map, with Previous, Next, and Show all controls; Previous and Next follow the top-down order. Summary, checks, blockers, and the map stay visible, every group keeps its own approval checkbox, and the snapshot approval still requires every group, so focusing never hides an unreviewed group from the final decision. A diff layout toggle switches all hunks between two columns and one column; it follows the width by default and keeps an explicit choice across re-renders.
 
+On the standalone page the group list sits in the left pane under the map, with すべて表示 (Show all) as its first entry, and selecting a list entry or a map node replaces the right pane. With nothing selected the right pane starts with the overview (summary, checks, snapshot details) followed by every group.
+
 The three actions are:
 
 - レビュー結果を送信 (Send review): sends all group approvals and non-empty comments
@@ -95,7 +97,7 @@ The three actions are:
 
 A single-language screen also shows 翻訳版を依頼 (Request translation). It sends a `submit_review` payload whose human-readable line ends with `add_language: <code>` for the missing language, so the current approvals and comments travel with the request and the regenerated screen can restore them. A bilingual screen does not show the button.
 
-Each action calls `sendPrompt` with a human-readable line that states counts and the action, never raw comments, followed by one machine-readable line:
+Each action delivers, through the host return channel or the page's copy box, a human-readable line that states counts and the action, never raw comments, followed by one machine-readable line:
 
 ```text
 review_payload_base64: <Base64-encoded UTF-8 JSON>
@@ -128,3 +130,5 @@ Preserve valid partial approvals and comments in the conversation after verifyin
 ## Visual priorities
 
 Overview first, then the impact map, then the group strip and layout controls, then grouped explanations in top-down layer order (all groups, or the focused one) with side-by-side diff evidence beneath each explanation, then local approval and comment controls, then the action bar. Keep the page readable at 680 px, and stack controls and each diff's before and after columns on narrow screens.
+
+On the standalone page: the top bar, then the left pane (impact map, group list, blockers) beside the right pane (overview or the selected group, its diff, its controls, the action bar); below 900 px the panes stack in that order and the map is laid out again for the new width.

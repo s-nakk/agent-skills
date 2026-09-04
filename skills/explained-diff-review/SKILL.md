@@ -7,12 +7,12 @@ description: Create an interactive explained diff review screen after code or tr
 
 Present completed changes as a reviewable conversation surface, not as a prose-only handoff. This review complements tests and any independent review required by the repository; it does not replace them.
 
-This skill is shared by Claude Code and Codex from one directory. The review data, the build tool, and the widget template are identical on both hosts; only the way the widget is shown and the way its actions return to the conversation differ. See the host section below.
+This skill is shared by Claude Code and Codex from one directory. The review data, the build tool, and the widget template are identical on both hosts; only the way the widget is shown and the way its actions return to the conversation differ. Both hosts can also emit the same review as a standalone two-pane page when the inline width is not enough. See the host section below.
 
 ## Required tooling
 
 - Python 3 and git on PATH for `scripts/review_tool.py`, which captures the deterministic snapshot, extracts the contextual diff, validates and orders the review data, builds the widget, and verifies follow-up payloads.
-- The fixed widget template `assets/review-widget.html`. Never author widget HTML or JavaScript by hand; the template is the only executable code the screen contains. It styles itself from the host's theme tokens on both hosts and falls back to theme-aware defaults elsewhere.
+- The fixed widget template `assets/review-widget.html`, and the document wrapper `assets/review-page.html` that `--layout page` puts around the same fragment. Never author widget HTML or JavaScript by hand; the template is the only executable code the screen contains. It styles itself from the host's theme tokens on both hosts and falls back to theme-aware defaults elsewhere.
 - The host's inline visualization surface, described in the host section.
 
 Read [references/review-screen-contract.md](references/review-screen-contract.md) for the data schema, commands, and interaction contract, and [references/layer-order-and-impact-map.md](references/layer-order-and-impact-map.md) for layer assignment, ordering, and the impact map before authoring the review data.
@@ -35,6 +35,12 @@ Codex:
   ```
 
 - Actions return through `window.openai.sendFollowUpMessage` as a follow-up message. The template prefers this API when present and otherwise uses `sendPrompt`.
+
+Standalone page (both hosts):
+
+- Add `--layout page` to the build when the user asks for a separate HTML file or a wider or two-pane view, or when the inline width is too narrow for the diff or the map (long lines, many nodes, many groups). The build wraps the same fragment in `assets/review-page.html`, a complete document: a top bar with the title, the language toggle, and the progress; a left pane with the impact map, the group list, and unresolved blockers; a right pane with the overview or the selected group and its diff. The page is always the whole review; split fragments are refused.
+- Write it to the scratchpad or the task's working directory as `explained-diff-review-<short snapshot id>.html`, never into the repository, and give the user the `absolute` path from the build output so they can open it in their browser. Use a host preview only when it runs the page's script: the Claude Code desktop browser pane shows a `file://` page from outside the project as a static snapshot, so serve the directory over localhost or leave the file to the user's browser.
+- The page has no return channel. Each action shows the message it would have sent, including the `review_payload_base64:` line, with a copy button; the user pastes it into the conversation. Verify and act on it exactly like a widget message.
 
 ## Workflow
 
@@ -59,7 +65,7 @@ Codex:
    python <skill>/scripts/review_tool.py build --snapshot <scratch>/snapshot.json --review <scratch>/review.json --out <output path>
    ```
 
-   Fix every validation error the build reports, then show the widget the way the host section describes.
+   Fix every validation error the build reports, then show the widget the way the host section describes. Add `--layout page` for the standalone page described there when the inline width is not enough.
 6. Return the screen in the same turn. Keep the surrounding response to a single short sentence unless a blocker or risk must be stated outside the screen.
 
 If the widget would be too large to stream comfortably, use the split-review flow in the contract reference: an index fragment, group fragments, and a final confirmation fragment that alone offers 全体を承認. Never offer final approval from fragments that cannot see the full review state.
