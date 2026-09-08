@@ -15,7 +15,7 @@ Keep `snapshot.json`, `review.json`, and `widget.html` in the session scratchpad
 
 ```text
 python <skill>/scripts/review_tool.py snapshot --repo <path> --base <rev> [--untracked <repo-relative path>]... [--context 6] [--function-context] --out snapshot.json
-python <skill>/scripts/review_tool.py build --snapshot snapshot.json --review review.json --out widget.html [--layout widget|page] [--fragment full|index|group|final] [--groups a,b] [--index n --total m] [--approved a,b] [--approved-files p,q]
+python <skill>/scripts/review_tool.py build --snapshot snapshot.json --review review.json --out widget.html [--layout widget|page] [--fragment full|index|group|final] [--groups a,b] [--index n --total m] [--approved a,b] [--approved-files p,q] [--exclude-approved]
 python <skill>/scripts/review_tool.py verify --payload-file message.txt --snapshot snapshot.json --review review.json
 ```
 
@@ -130,7 +130,7 @@ A comment without an anchor is the group's general comment. A line comment carri
 
 When one screen would be too large, build an `index` fragment (overview, map, group list, no diffs, no actions), one `group` fragment per group or set of groups with `--groups`, `--index`, and `--total`, and finally a `final` fragment (group and file lists with recorded approvals via `--approved` or `--approved-files`, no diffs) that alone offers 全体を承認. All fragments share one snapshot and snapshot id. Group fragments offer only sending and requesting changes.
 
-Preserve valid partial approvals and comments in the conversation after verifying each payload against the same snapshot. Once every file is reviewed and blockers are resolved, build the final fragment with `--approved-files` (or `--approved` for whole groups) listing the verified approvals.
+Preserve valid partial approvals and comments in the conversation after verifying each payload against the same snapshot. Once every file is reviewed and blockers are resolved, build the final fragment with `--approved-files` (or `--approved` for whole groups) listing the verified approvals. When the user has approved part of a snapshot and wants to see only what is left, rebuild the full screen with `--approved-files` plus `--exclude-approved`: the approved files keep counting toward the approval and appear in the payload, but their cards are left out of the screen, and each group names the files it left out.
 
 ## Visual priorities
 

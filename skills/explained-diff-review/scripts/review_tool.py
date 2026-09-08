@@ -655,7 +655,7 @@ def compose_map(review: dict, snapshot: dict) -> dict:
     return {"nodes": nodes_out, "edges": map_in.get("edges", []) or []}
 
 
-def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment: dict, only_groups: list[str] | None, approved: list[str], layout: str, editor_url: str | None = None, approved_files: list[str] | None = None) -> dict:
+def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment: dict, only_groups: list[str] | None, approved: list[str], layout: str, editor_url: str | None = None, approved_files: list[str] | None = None, exclude_approved: bool = False) -> dict:
     locale = review.get("locale", "ja")
     header = snapshot["header"]
     file_info = {f["path"]: f for f in review.get("files", [])}
@@ -670,6 +670,10 @@ def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment
         return (LAYER_INDEX[info["layer"]][0], info.get("order", 10**6), path)
 
     all_slugs = [g["slug"] for g in review["groups"]]
+    approved_set = set(approved_files or [])
+    for g in review["groups"]:
+        if g["slug"] in approved:
+            approved_set.update(hunk_lookup[hid][0]["path"] for hid in (g.get("hunks", []) or []))
     groups_out = []
     for authored_index, g in enumerate(review["groups"]):
         hunk_refs = sorted(g.get("hunks", []) or [], key=lambda hid: (file_rank(hunk_lookup[hid][0]["path"]), hunk_lookup[hid][2]))
@@ -677,9 +681,13 @@ def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment
         hunks_out = []
         files_out = []
         seen_files: set[str] = set()
+        excluded: set[str] = set()
         min_rank = 10**9
         for hid in hunk_refs:
             f, hk, n = hunk_lookup[hid]
+            if exclude_approved and f["path"] in approved_set:
+                excluded.add(f["path"])
+                continue
             info = file_info[f["path"]]
             rank = LAYER_INDEX[info["layer"]][0]
             min_rank = min(min_rank, rank)
@@ -709,6 +717,7 @@ def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment
             "findings": g.get("findings", []) or [],
             "limitations": g.get("limitations", []) or [],
             "approved": g["slug"] in approved,
+            "excluded_files": sorted(excluded, key=file_rank),
             "_rank": (min_rank, authored_index),
         }
         groups_out.append(entry)
@@ -743,7 +752,7 @@ def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment
         "map": compose_map(review, snapshot),
         "expected_groups": all_slugs,
         "expected_files": sorted(snap_files, key=file_rank),
-        "approved_files": sorted(set(approved_files or []) | {f["path"] for e in groups_out if e["approved"] for f in e["files"]}, key=file_rank),
+        "approved_files": sorted(approved_set, key=file_rank),
         "groups": groups_out,
         "editor_url": editor_url,
     }
@@ -837,7 +846,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     for p in approved_files:
         if p not in snap_paths:
             fail(f"unknown file in --approved-files: {p}")
-    data = compose_widget_data(review, snapshot, snapshot_id, fragment, only, approved, args.layout, resolve_editor_url(args.editor), approved_files)
+    data = compose_widget_data(review, snapshot, snapshot_id, fragment, only, approved, args.layout, resolve_editor_url(args.editor), approved_files, args.exclude_approved)
     assets = Path(__file__).resolve().parent.parent / "assets"
     template_path = args.template or str(assets / "review-widget.html")
     template = Path(template_path).read_text(encoding="utf-8")
@@ -1050,6 +1059,7 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--total", type=int, help="fragment count")
     b.add_argument("--approved", help="comma-separated group slugs whose files are pre-checked from earlier valid partial approvals")
     b.add_argument("--approved-files", help="comma-separated file paths to pre-check from earlier valid partial approvals")
+    b.add_argument("--exclude-approved", action="store_true", help="leave the diff of pre-approved files out of the screen; they still count as approved in the payload")
     b.add_argument("--editor", default="vscode", help="open-in-editor links: vscode (default), vscode-insiders, cursor, none, or a URL template with {path} and {line}")
     b.add_argument("--out", required=True, help="output widget HTML path")
     b.set_defaults(func=cmd_build)
