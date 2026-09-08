@@ -61,6 +61,8 @@
 .edr .edr-anno .edr-k{display:block;font-size:12px;color:var(--edr-acc-tx);margin-bottom:2px}
 .edr .edr-anno p{margin:0 0 .3rem}
 .edr .edr-anno p:last-child{margin-bottom:0}
+.edr p.edr-nl{display:grid;grid-template-columns:4.5em 1fr;gap:0 8px}
+.edr p.edr-nl b{font-weight:600;color:var(--edr-acc-tx)}
 .edr details{border:0.5px solid var(--edr-bd);border-radius:var(--edr-r);margin:0 0 8px;background:var(--edr-s1)}
 .edr summary{cursor:pointer;padding:6px 10px;font-size:13px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .edr .edr-diff{display:grid;grid-template-columns:3em minmax(0,1fr) 3em minmax(0,1fr);font-family:var(--edr-mono);font-size:12px;line-height:1.5;border-top:0.5px solid var(--edr-bd);background:var(--edr-s2)}
@@ -186,7 +188,7 @@ function statusKind(s){return s==="passed"?"ok":s==="failed"?"ng":s==="not_run"?
 function textWidth(str,size){var w=0;for(var i=0;i<str.length;i++){var c=str.charCodeAt(i);w+=(c>0x2e7f&&c<0xd7a4)||(c>=0xf900&&c<=0xfaff)||(c>=0xff00&&c<=0xffef)?size:size*0.58;}return w;}
 function b64(obj){var bytes=new TextEncoder().encode(JSON.stringify(obj));var bin="";for(var i=0;i<bytes.length;i++)bin+=String.fromCharCode(bytes[i]);return btoa(bin);}
 function deliver(text,title){if(window.openai&&typeof window.openai.sendFollowUpMessage==="function"){window.openai.sendFollowUpMessage({prompt:text,title:title});return true;}if(typeof sendPrompt==="function"){sendPrompt(text);return true;}return false;}
-function paragraphs(v){if(v==null||v==="")return[];var arr=Array.isArray(v)?v:[v];return arr.map(function(t){return h("p",{text:String(t)});});}
+var NOTE_LABEL=/^(変更前|変更後|理由|背景|補足|Before|After|Why|Context|Note)[:：]\s*/;function paragraphs(v){if(v==null||v==="")return[];var arr=Array.isArray(v)?v:[v];return arr.map(function(t){t=String(t);var m=t.match(NOTE_LABEL);if(!m)return h("p",{text:t});return h("p",{class:"edr-nl"},[h("b",{text:m[1]}),t.slice(m[0].length)]);});}
 function kvRow(dl,label,value){var ps=paragraphs(value);if(!ps.length)return;dl.appendChild(h("dt",{text:label}));dl.appendChild(h("dd",null,ps));}
 var root=document.getElementById("edr-root");
 var data;
