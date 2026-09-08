@@ -7,7 +7,7 @@ Claude Code と Codex の両方で使う、開発フロー用の自作 Skill 集
 
 | Skill | 役割 | 主な依存 |
 |---|---|---|
-| [`setup-development-policy`](skills/setup-development-policy/SKILL.md) | 既存規約を調べ、Issue・設計承認・Git・Worktree・独立レビュー・保存範囲を初回だけ対話で決める。共通規約とプロジェクト設定を導入先へ保存する | なし（対話ツールがなければ通常の会話） |
+| [`setup-development-policy`](skills/setup-development-policy/SKILL.md) | 既存規約を調べ、Issue・設計承認・Git・Worktree・独立レビュー・保存範囲を初回だけ対話で決める。GLOBAL と Project の AGENTS.md・補助規約を役割別に展開する（Codex 向け） | なし（対話ツールがなければ通常の会話） |
 | [`independent-final-review`](skills/independent-final-review/SKILL.md) | 実装者から独立した reviewer セッションで、PR や commit 差分を read-only のリスク重み付き敵対的検証にかける。再レビューは同じ reviewer を再開する | Codex: `assets/independent-review.config.toml` の profile。Claude Code: subagent |
 | [`change-design-gate`](skills/change-design-gate/SKILL.md) | 変更に着手する前に、処理パイプライン図・具体例・受け入れ条件・テストケースを含む自己完結 HTML を作り、明示承認まで実装を止める | `gh`、`assets/` の HTML と台帳の雛形 |
 | [`github-issue-flow`](skills/github-issue-flow/SKILL.md) | GitHub Issue を起点に、既存 Issue を変更せず worktree 分離・SDD/TDD・検証・draft PR・独立レビューまで進める定型フロー | `gh` |
@@ -31,7 +31,7 @@ Windows / Mac ともに、導入先の端末で直接取得する。Node.js（np
 npx skills add s-nakk/agent-skills --skill setup-development-policy --agent codex --global --copy
 ```
 
-`--copy` によりシンボリックリンクを使わず取得できる。Windows PowerShell で `npx.ps1` の実行が制限される場合は、先頭を `npx.cmd` にする。Claude Code 用なら `--agent claude-code` を指定する。既存の同名 Skill がある場合は、更新前に独自変更を比較する。
+`--copy` によりシンボリックリンクを使わず取得できる。Windows PowerShell で `npx.ps1` の実行が制限される場合は、先頭を `npx.cmd` にする。この Skill の展開対象は Codex の規約。既存の同名 Skill がある場合は、更新前に独自変更を比較する。
 
 他の Skill も選んで導入する場合:
 
@@ -65,22 +65,27 @@ git clone https://github.com/s-nakk/agent-skills.git ~/projects/agent-skills
 
 詳細は [Windows と Mac への導入](skills/setup-development-policy/references/platforms.md) を参照する。この対応範囲は導入用 Skill と共通規約であり、他の Skill のスクリプトや各プロジェクトのビルドの OS 対応は、それぞれ確認する。
 
-### 共通規約を別プロジェクトへ導入する
+### GLOBAL と Project の規約を導入する
 
-導入先のプロジェクトを開き、次のように依頼する。
+インストール後、対象プロジェクトの Codex で次を依頼する。
 
 ```text
-$setup-development-policy で、このプロジェクトに共通の開発方針を導入してください。
-既存の規約と構成を調べ、未確定の運用だけ質問してください。
+$setup-development-policy で、GLOBAL とこのプロジェクトに開発ルールを展開して。
+既存ルールを保持し、Issue など未確定の運用だけ質問して。
 ```
 
-既に決まっているなら「Issue は使わない」「ローカル変更まで」のように添えると再質問を省ける。通常の生成先は `.agent-policy/core.md` と `.agent-policy/project.md`、入口は対象ツールの `AGENTS.md` または `CLAUDE.md`。既存の入口・override・保存範囲を確認してから反映し、GLOBAL は明示的に選ばない限り変更しない。
+元の GLOBAL と基準プロジェクトの規約から固有情報を除いた原本を、その役割のまま使う。新たな共通規約を生成して両方へコピーする方式ではない。
 
-配布するのは汎用の原本であり、導入先の回答・固有設定・認証情報をこのリポジトリへ送信しない。生成物は導入先内の相対パスで参照するため、ホームやプロジェクトの保存場所が異なる端末にも移せる。
+| 展開先 | 内容 |
+|---|---|
+| Codex 設定先の `AGENTS.md` と `rule-reference/coding.md` | 応答・調査・コーディング・品質・サブエージェントの共通方針 |
+| Project の `AGENTS.md` と `.codex/rule-reference/` | 作業フロー・独立レビュー・運用選択・導入先の正本と追加条件 |
 
-Windows と Mac で同じ運用選択を使い、実行コマンドだけ必要に応じて OS・シェル別に保存する。Windows ネイティブと WSL は区別し、端末を変えただけで初回質問を繰り返さない。GLOBAL への反映を依頼した場合も、導入先の設定ディレクトリを確認し、元端末の絶対パスを持ち込まない。
+Codex 設定先は `CODEX_HOME`、未設定ならユーザーホームの `.codex`。Windows / Mac ともに実際のホームを解決する。GLOBAL に Project の参照を入れず、Project に GLOBAL の共通本文を再掲しない。業務専用の契約、技術スタック、CI の固定値、元端末のパスや認証情報は配布しない。[原本・配置・除外対象](skills/setup-development-policy/references/template-map.md) に対応をまとめている。
 
-Skill の `git pull` と、導入先へコピーした規約の更新は別操作。既存プロジェクトの共通規約を更新する時は、この Skill に更新を依頼する。保存済みの運用は再質問せず、独自変更と新しい原本を比較してから反映する。通常の実装依頼でセットアップは繰り返さない。
+「GLOBAL のみ」「Project のみ」も指定できる。Project のみの場合は必要な GLOBAL が有効かを確認し、不足すれば具体的な追加案を示す。Issue などの確定済み選択は再質問せず、保存した運用に応じて手順を適用する。
+
+Skill の更新と、展開済み規約の更新は別操作。更新を依頼した時だけ原本と既存本文を比較し、独自条件と運用選択を保持する。v1 の `.agent-policy/` も、GLOBAL と Project へ役割を分けて引き継ぐ。導入先の回答や固有情報をこの配布リポジトリへ送信しない。
 
 ### Skill ごとの追加設定
 

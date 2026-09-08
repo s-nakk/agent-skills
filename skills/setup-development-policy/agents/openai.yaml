@@ -1,4 +1,4 @@
 interface:
   display_name: "開発方針の対話式セットアップ"
-  short_description: "既存プロジェクトを調べ、共通開発規約と運用の選択を対話で保存する"
-  default_prompt: "$setup-development-policy で、このプロジェクトの開発方針を調べ、未確定の運用だけ対話で決めて導入してください。"
+  short_description: "GLOBAL と Project の規約を分けて展開し、未確定の運用を対話で決める"
+  default_prompt: "$setup-development-policy で、GLOBAL とこのプロジェクトへ配布原本を展開し、未確定の運用だけ対話で決めてください。"
