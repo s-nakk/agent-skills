@@ -85,8 +85,8 @@ The verifier rejects malformed payloads, unsupported versions, mismatched reposi
 - `stale`: the snapshot changed. Do not apply the old approval. Explain that the review is stale, capture a new snapshot, and generate a replacement screen.
 - `apply_request_changes`: revise the reviewed work within the current task scope, rerun the applicable checks and independent review, capture a new snapshot, and generate a fresh screen with a new snapshot id.
 - Comments may carry a line anchor (`path`, `hunk`, `side`, `line`) from the diff. Treat an anchored comment as feedback on that exact line: quote the file and line when you answer it, and make the revision there when you apply it.
-- `answer_submit_review`: partial review state only. Do not modify files, approve the snapshot, or continue the workflow. Answer the submitted comments, keep the partial approvals in the conversation, and regenerate the same snapshot screen with `--approved` when another user decision is needed.
-- `reject_approval`: approved groups miss part of the expected set, or blockers remain. Say which groups or blockers are outstanding and regenerate the screen.
+- `answer_submit_review`: partial review state only. Do not modify files, approve the snapshot, or continue the workflow. Answer the submitted comments, keep the partial approvals in the conversation, and regenerate the same snapshot screen with `--approved-files` (or `--approved` for whole groups) when another user decision is needed.
+- `reject_approval`: approved files or groups miss part of the expected set, or blockers remain. Say which files, groups, or blockers are outstanding and regenerate the screen.
 - `accept_approval`: treat it as acceptance of that exact snapshot and permission to continue only with steps already authorized by the task and the governing repository workflow.
 
 Never interpret review approval as authorization to push, create or mutate a pull request, merge, deploy, change production, or perform another separately gated action. Preserve comments in the conversation and reflect resolved comments in the next screen. Do not invent a durable approval record unless the user asks for one.

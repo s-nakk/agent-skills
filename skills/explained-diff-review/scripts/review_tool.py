@@ -655,7 +655,7 @@ def compose_map(review: dict, snapshot: dict) -> dict:
     return {"nodes": nodes_out, "edges": map_in.get("edges", []) or []}
 
 
-def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment: dict, only_groups: list[str] | None, approved: list[str], layout: str, editor_url: str | None = None) -> dict:
+def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment: dict, only_groups: list[str] | None, approved: list[str], layout: str, editor_url: str | None = None, approved_files: list[str] | None = None) -> dict:
     locale = review.get("locale", "ja")
     header = snapshot["header"]
     file_info = {f["path"]: f for f in review.get("files", [])}
@@ -742,6 +742,8 @@ def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment
         "layers": layers_out,
         "map": compose_map(review, snapshot),
         "expected_groups": all_slugs,
+        "expected_files": sorted(snap_files, key=file_rank),
+        "approved_files": sorted(set(approved_files or []) | {f["path"] for e in groups_out if e["approved"] for f in e["files"]}, key=file_rank),
         "groups": groups_out,
         "editor_url": editor_url,
     }
@@ -830,7 +832,12 @@ def cmd_build(args: argparse.Namespace) -> int:
     for s in (only or []) + approved:
         if s not in known:
             fail(f"unknown group slug in options: {s}")
-    data = compose_widget_data(review, snapshot, snapshot_id, fragment, only, approved, args.layout, resolve_editor_url(args.editor))
+    approved_files = [s.strip() for s in args.approved_files.split(",")] if args.approved_files else []
+    snap_paths = {f["path"] for f in snapshot["files"]}
+    for p in approved_files:
+        if p not in snap_paths:
+            fail(f"unknown file in --approved-files: {p}")
+    data = compose_widget_data(review, snapshot, snapshot_id, fragment, only, approved, args.layout, resolve_editor_url(args.editor), approved_files)
     assets = Path(__file__).resolve().parent.parent / "assets"
     template_path = args.template or str(assets / "review-widget.html")
     template = Path(template_path).read_text(encoding="utf-8")
@@ -916,6 +923,19 @@ def validate_payload(p: dict, errors: list[str]) -> None:
         unknown = set(p["approved_groups"]) - set(p["expected_groups"])
         if unknown:
             errors.append(f"approved_groups contains groups outside expected_groups: {sorted(unknown)}")
+    for key in ("expected_files", "approved_files"):
+        if key in p:
+            v = p.get(key)
+            if not isinstance(v, list) or any(not isinstance(x, str) or not x for x in v):
+                errors.append(f"{key} must be a list of file paths")
+            elif len(set(v)) != len(v):
+                errors.append(f"{key} contains duplicates")
+    if ("expected_files" in p) != ("approved_files" in p):
+        errors.append("expected_files and approved_files must be sent together")
+    if isinstance(p.get("expected_files"), list) and isinstance(p.get("approved_files"), list):
+        unknown_files = set(p["approved_files"]) - set(p["expected_files"])
+        if unknown_files:
+            errors.append(f"approved_files contains files outside expected_files: {sorted(unknown_files)}")
     comments = p.get("comments")
     if not isinstance(comments, list):
         errors.append("comments must be a list")
@@ -962,6 +982,15 @@ def cmd_verify(args: argparse.Namespace) -> int:
     result["expected_groups_match"] = sorted(payload["expected_groups"]) == sorted(expected)
     result["approved_groups"] = payload["approved_groups"]
     result["missing_groups"] = sorted(set(expected) - set(payload["approved_groups"]))
+    snap_paths = sorted(f["path"] for f in snapshot["files"])
+    if "expected_files" in payload:
+        result["expected_files_match"] = sorted(payload["expected_files"]) == snap_paths
+        result["approved_files"] = payload["approved_files"]
+        result["missing_files"] = sorted(set(snap_paths) - set(payload["approved_files"]))
+    else:
+        result["expected_files_match"] = True
+        result["approved_files"] = None
+        result["missing_files"] = []
     result["unresolved_blockers"] = blockers
     result["comments"] = payload["comments"]
     known_lines = anchored_lines(snapshot)
@@ -972,6 +1001,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
         result["errors"].append("payload repository does not match the snapshot repository")
     if not result["expected_groups_match"]:
         result["errors"].append("payload expected_groups differ from the reconstructed group set")
+    if not result["expected_files_match"]:
+        result["errors"].append("payload expected_files differ from the snapshot file set")
     if result["errors"]:
         print(json.dumps(result, ensure_ascii=False, indent=1))
         return 1
@@ -983,7 +1014,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         result["decision"] = "apply_request_changes"
     elif action == "submit_review":
         result["decision"] = "answer_submit_review"
-    elif result["missing_groups"] or blockers:
+    elif result["missing_groups"] or result["missing_files"] or blockers:
         result["decision"] = "reject_approval"
     else:
         result["decision"] = "accept_approval"
@@ -1017,7 +1048,8 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--groups", help="comma-separated slugs included in a group fragment")
     b.add_argument("--index", type=int, help="fragment position (1-based)")
     b.add_argument("--total", type=int, help="fragment count")
-    b.add_argument("--approved", help="comma-separated slugs to pre-check from earlier valid partial approvals")
+    b.add_argument("--approved", help="comma-separated group slugs whose files are pre-checked from earlier valid partial approvals")
+    b.add_argument("--approved-files", help="comma-separated file paths to pre-check from earlier valid partial approvals")
     b.add_argument("--editor", default="vscode", help="open-in-editor links: vscode (default), vscode-insiders, cursor, none, or a URL template with {path} and {line}")
     b.add_argument("--out", required=True, help="output widget HTML path")
     b.set_defaults(func=cmd_build)

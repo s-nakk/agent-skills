@@ -15,7 +15,7 @@ Keep `snapshot.json`, `review.json`, and `widget.html` in the session scratchpad
 
 ```text
 python <skill>/scripts/review_tool.py snapshot --repo <path> --base <rev> [--untracked <repo-relative path>]... [--context 6] [--function-context] --out snapshot.json
-python <skill>/scripts/review_tool.py build --snapshot snapshot.json --review review.json --out widget.html [--layout widget|page] [--fragment full|index|group|final] [--groups a,b] [--index n --total m] [--approved a,b]
+python <skill>/scripts/review_tool.py build --snapshot snapshot.json --review review.json --out widget.html [--layout widget|page] [--fragment full|index|group|final] [--groups a,b] [--index n --total m] [--approved a,b] [--approved-files p,q]
 python <skill>/scripts/review_tool.py verify --payload-file message.txt --snapshot snapshot.json --review review.json
 ```
 
@@ -23,7 +23,7 @@ python <skill>/scripts/review_tool.py verify --payload-file message.txt --snapsh
 
 ## Snapshot identity
 
-The header shows repository, task title, base and current commit, working-tree state, file, hunk, addition and deletion counts, the short snapshot id, the generation time, and the approval progress as approved groups / total groups.
+The header shows repository, task title, base and current commit, working-tree state, file, hunk, addition and deletion counts, the short snapshot id, the generation time, and the approval progress as approved files / total files.
 
 `review_tool.py` builds the manifest from byte-level inputs: canonical repository root, git common directory, object format, base and HEAD object ids, the index patch from the base and the unstaged working-tree patch (both with full object ids, binary patches, file modes, renames, and submodule ids), each reviewed untracked file with its path, mode, and raw bytes, the sorted expected group slugs, and the sorted unresolved blocker ids. Every field is serialized as key length, key bytes, value length, value bytes; the whole manifest, including the schema version, is hashed with SHA-256. Path records sort by raw path bytes, and line endings and encodings are never normalized. The id changes on any input change, including a rebase or cherry-pick that keeps the visible patch.
 
@@ -69,7 +69,7 @@ Group changes by user-visible behavior, contract, or technical responsibility. D
 
 ## Diff layout
 
-The template renders each hunk as a two-column comparison labeled 変更前 and 変更後 (Before and After), with old and new line numbers, a visible sign and theme-aware color on every changed line, unchanged context subordinated, long lines wrapped, and deletion and addition runs paired by position only, padding the shorter side. Binary changes, renames, mode changes, and submodule changes render as paired metadata. Inside a group the hunks are grouped by file, each file under a header that carries its path, layer, status, and `note`. Each hunk sits in a native `details` element; the first hunk of each group and every hunk that has `hunk_notes` open by default, the rest stay one click away. A hunk note renders as a full-width annotation row inside the diff grid, directly under its anchored line (or under the last changed line when the note has no anchor), so the explanation sits next to the code it explains. The group explanation and the approval controls never collapse.
+The template renders each hunk as a two-column comparison labeled 変更前 and 変更後 (Before and After), with old and new line numbers, a visible sign and theme-aware color on every changed line, unchanged context subordinated, long lines wrapped, and deletion and addition runs paired by position only, padding the shorter side. Binary changes, renames, mode changes, and submodule changes render as paired metadata. Inside a group the hunks are grouped by file, each file under a header that carries its path, layer, status, and `note`. Each hunk sits in a native `details` element; the first hunk of each group and every hunk that has `hunk_notes` open by default, the rest stay one click away. A hunk note renders as a full-width annotation row inside the diff grid, directly under its anchored line (or under the last changed line when the note has no anchor), so the explanation sits next to the code it explains. The group explanation and the approval controls never collapse. When a removed line sits beside an added line and the two share at least 30 % of their tokens, the tokens that differ are highlighted inside each line; a rewritten line shows no intra-line highlight, so the reader is not asked to spot a one-character change by eye.
 
 You control the context. Default to `--context 6`; raise it, or add `--function-context`, when the shorter window does not identify the enclosing method, branch, transaction boundary, or processing sequence. Never trim context to save space; split the review instead.
 
@@ -83,19 +83,19 @@ Show one concise overall summary followed by the impact map and the change group
 
 ## Interaction
 
-Approval checkboxes and comments stay local until the user sends them. Checking a box updates the visible progress, the approval marker on the group's map nodes, and the group strip above the groups.
+The approval unit is the file. Every file header in a group's diff carries a labeled checkbox (このファイルを確認して承認) with an 承認済み pill once checked, and a file that appears in several groups shares one state across them. Each group also has a bulk checkbox (このグループのファイルをすべて承認) that sets every file of the group and shows an indeterminate state while only some are approved; a group counts as approved when all its files are. Approvals and comments stay local until the user sends them. Checking a box updates the visible progress (files approved / total files), the approval marker on the group's map nodes, and the group strip.
 
 Comments come in two forms. Each group has a general comment box under its diff. Each diff line also accepts a line comment: hovering a line number shows a + button that opens a comment box directly under that line (under the before or the after column in the two-column layout), the way a pull request review does; the box names the file and the line, keeps its text while the reader moves between groups, and has a remove button. A hunk that holds a line comment opens automatically when it is rendered again.
 
-The screen offers a focus mode. Selecting a map node or a group in the strip shows that group alone below the map, with Previous, Next, and Show all controls; Previous and Next follow the top-down order. Summary, checks, blockers, and the map stay visible, every group keeps its own approval checkbox, and the snapshot approval still requires every group, so focusing never hides an unreviewed group from the final decision. A diff layout toggle switches all hunks between two columns and one column; it follows the width by default and keeps an explicit choice across re-renders.
+The screen offers a focus mode. Selecting a map node or a group in the strip shows that group alone below the map, with Previous, Next, and Show all controls; Previous and Next follow the top-down order. Summary, checks, blockers, and the map stay visible, every file keeps its own approval checkbox, and the snapshot approval still requires every file, so focusing never hides an unreviewed file from the final decision. A diff layout toggle switches all hunks between two columns and one column; it follows the width by default and keeps an explicit choice across re-renders.
 
 On the standalone page the group list sits in the left pane under the map, with すべて表示 (Show all) as its first entry, and selecting a list entry or a map node replaces the right pane. With nothing selected the right pane starts with the overview (summary, checks, snapshot details) followed by every group.
 
 The three actions are:
 
-- レビュー結果を送信 (Send review): sends all group approvals and non-empty comments
+- レビュー結果を送信 (Send review): sends the approved files (and the groups they complete) and non-empty comments
 - 修正を依頼 (Request changes): sends the current non-empty comments without approving; the widget refuses to send without a comment and shows an accessible message
-- 全体を承認 (Approve snapshot): enabled only when every group is checked and no unresolved blocker is shown
+- 全体を承認 (Approve snapshot): enabled only when every file is checked and no unresolved blocker is shown
 
 Each action delivers, through the host return channel or the page's copy box, a human-readable line that states counts and the action, never raw comments, followed by one machine-readable line:
 
@@ -113,6 +113,8 @@ The decoded object has exactly this shape:
   "repository": "<canonical absolute repository path>",
   "expected_groups": ["<group slug>"],
   "approved_groups": ["<group slug>"],
+  "expected_files": ["<changed file>"],
+  "approved_files": ["<changed file>"],
   "comments": [
     { "group": "<group slug>", "body": "<arbitrary Unicode text>" },
     { "group": "<group slug>", "body": "<arbitrary Unicode text>", "path": "<changed file>", "hunk": "<hunk id>", "side": "old | new", "line": 12 }
@@ -122,13 +124,13 @@ The decoded object has exactly this shape:
 
 A comment without an anchor is the group's general comment. A line comment carries all four anchor keys: the file, the hunk id from the snapshot, the side (`old` for the before column, `new` for the after column), and the line number on that side. `verify` rejects an anchor that is incomplete or that names a line the snapshot diff does not show. Comments are ordered by group, then by hunk, then by line.
 
-`expected_groups` always carries the full group set, also in split-review fragments. Sending is a message to the conversation, not a repository or external-service mutation; the widget says so under the buttons.
+`expected_groups` always carries the full group set and `expected_files` the full snapshot file set, also in split-review fragments; `approved_groups` lists the groups whose files are all approved. `verify` rejects a payload whose `expected_files` differ from the snapshot and reports `missing_files` for an approval that leaves a file unchecked. Sending is a message to the conversation, not a repository or external-service mutation; the widget says so under the buttons.
 
 ## Split reviews
 
-When one screen would be too large, build an `index` fragment (overview, map, group list, no diffs, no actions), one `group` fragment per group or set of groups with `--groups`, `--index`, and `--total`, and finally a `final` fragment (group list with recorded approvals via `--approved`, no diffs) that alone offers 全体を承認. All fragments share one snapshot and snapshot id. Group fragments offer only sending and requesting changes.
+When one screen would be too large, build an `index` fragment (overview, map, group list, no diffs, no actions), one `group` fragment per group or set of groups with `--groups`, `--index`, and `--total`, and finally a `final` fragment (group and file lists with recorded approvals via `--approved` or `--approved-files`, no diffs) that alone offers 全体を承認. All fragments share one snapshot and snapshot id. Group fragments offer only sending and requesting changes.
 
-Preserve valid partial approvals and comments in the conversation after verifying each payload against the same snapshot. Once every group is reviewed and blockers are resolved, build the final fragment with `--approved` listing the verified approvals.
+Preserve valid partial approvals and comments in the conversation after verifying each payload against the same snapshot. Once every file is reviewed and blockers are resolved, build the final fragment with `--approved-files` (or `--approved` for whole groups) listing the verified approvals.
 
 ## Visual priorities
 
