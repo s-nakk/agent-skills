@@ -12,7 +12,7 @@ Claude Code と Codex の両方で使う、開発フロー用の自作 Skill 集
 | [`github-issue-flow`](skills/github-issue-flow/SKILL.md) | GitHub Issue を起点に、既存 Issue を変更せず worktree 分離・SDD/TDD・検証・draft PR・独立レビューまで進める定型フロー | `gh` |
 | [`thermo-nuclear-code-quality-review`](skills/thermo-nuclear-code-quality-review/SKILL.md) | 抽象化の質、巨大ファイル化、条件分岐の増殖を極めて厳しく審査する保守性レビュー | なし |
 | [`compact-prep`](skills/compact-prep/SKILL.md) | コンテキスト圧縮の前に、採用・却下した判断と次の一手を状態ファイルへ退避する。**Claude Code 専用** | `assets/compact-state-hook.py` を hook 登録（`references/setup.md`） |
-| [`explained-diff-review`](skills/explained-diff-review/SKILL.md) | 実装完了後に、変更を画面 → API → アプリケーション → 永続化の順に並べた説明付きレビュー画面を会話内に表示する。影響範囲マップ、2 列差分、グループ単位の承認とコメント、差分の行に差し込む行コメント、スナップショット ID による承認の同一性検証を含む。画面の言語は生成時に `locale` で日本語 / 英語を選ぶ。会話内の幅が足りない時は `--layout page` で、左にマップとグループ一覧、右に説明と差分を置く 2 ペインの単独 HTML を生成できる（送信はメッセージのコピー & 貼り付け） | Python 3、`git`。Claude Code: `visualize` MCP の `show_widget`。Codex: 同梱 `visualize` skill |
+| [`explained-diff-review`](skills/explained-diff-review/SKILL.md) | 実装完了後に、変更を画面 → API → アプリケーション → 永続化の順に並べた説明付きレビュー画面を会話内に表示する。影響範囲マップ、2 列差分、グループ単位の承認とコメント、差分の行に差し込む行コメント、スナップショット ID による承認の同一性検証を含む。差分にはファイルごとの見出し（概要と「エディタで開く」リンク、`--editor` で URL スキームを選択）と、hunk の該当行の直下に差し込む解説（`hunk_notes`、行アンカー対応）を置ける。画面の言語は生成時に `locale` で日本語 / 英語を選ぶ。会話内の幅が足りない時は `--layout page` で、左にマップとグループ一覧、右に説明と差分を置く 2 ペインの単独 HTML を生成できる（送信はメッセージのコピー & 貼り付け） | Python 3、`git`。Claude Code: `visualize` MCP の `show_widget`。Codex: 同梱 `visualize` skill |
 
 想定する組み合わせ: `github-issue-flow` で Issue を確定 → `change-design-gate` で設計承認 → 実装 → draft PR → `independent-final-review`。`thermo-nuclear-code-quality-review` は保守性を別軸で見たい時に追加で使う。`explained-diff-review` は実装と独立レビューが終わった変更をユーザーが会話内で確認・承認する時に使う。
 

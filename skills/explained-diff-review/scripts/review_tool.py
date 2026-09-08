@@ -459,6 +459,22 @@ def validate_texts(review: dict, errors: list[str]) -> None:
             check_text(fd.get("title"), f"groups[{slug}].findings[{i}].title", errors, allow_list=False)
             check_text(fd.get("detail"), f"groups[{slug}].findings[{i}].detail", errors, allow_list=False)
         check_text(g.get("limitations"), f"groups[{slug}].limitations", errors)
+        notes = g.get("hunk_notes")
+        if notes is not None and not isinstance(notes, dict):
+            errors.append(f"groups[{slug}].hunk_notes: must be an object keyed by hunk id")
+        elif notes:
+            for hid, value in notes.items():
+                where = f"groups[{slug}].hunk_notes[{hid}]"
+                items = value if isinstance(value, list) else [value]
+                if items and all(isinstance(it, dict) for it in items):
+                    for k, it in enumerate(items):
+                        check_text(it.get("text"), f"{where}[{k}].text", errors)
+                elif all(isinstance(it, str) for it in items):
+                    check_text(value, where, errors)
+                else:
+                    errors.append(f"{where}: use a string, a list of paragraphs, or a list of {{side, line, text}} anchors; do not mix")
+    for i, f in enumerate(review.get("files", []) or []):
+        check_text(f.get("note"), f"files[{i}].note", errors)
 
 
 def validate_review(review: dict, snapshot: dict, errors: list[str], warnings: list[str]) -> None:
@@ -507,6 +523,7 @@ def validate_review(review: dict, snapshot: dict, errors: list[str], warnings: l
     for p in sorted(snapshot_paths - set(file_layers)):
         errors.append(f"changed file has no layer assignment in files: {p}")
     hunk_ids = {hk["id"] for f in snapshot["files"] for hk in f["hunks"]}
+    hunk_rows = {hk["id"]: hk["rows"] for f in snapshot["files"] for hk in f["hunks"]}
     assigned: dict[str, str] = {}
     for g in groups:
         slug = g.get("slug")
@@ -519,6 +536,29 @@ def validate_review(review: dict, snapshot: dict, errors: list[str], warnings: l
                 assigned[hid] = slug
     for hid in sorted(hunk_ids - set(assigned)):
         errors.append(f"hunk is not assigned to any group: {hid}")
+    for g in groups:
+        slug = g.get("slug")
+        notes = g.get("hunk_notes")
+        if not isinstance(notes, dict):
+            continue
+        for hid, value in notes.items():
+            if hid not in hunk_ids:
+                errors.append(f"group {slug} hunk_notes refers to unknown hunk id: {hid}")
+                continue
+            if assigned.get(hid) != slug:
+                errors.append(f"group {slug} hunk_notes refers to hunk {hid}, which belongs to group {assigned.get(hid)}")
+                continue
+            items = value if isinstance(value, list) else [value]
+            for k, it in enumerate(items):
+                if not isinstance(it, dict):
+                    continue
+                side, line = it.get("side"), it.get("line")
+                if side not in ("old", "new") or not isinstance(line, int) or line < 1:
+                    errors.append(f"group {slug} hunk_notes[{hid}][{k}]: anchor needs side (old|new) and a line number >= 1")
+                    continue
+                col = 1 if side == "old" else 2
+                if not any(r[col] == line for r in hunk_rows[hid]):
+                    errors.append(f"group {slug} hunk_notes[{hid}][{k}]: {side} line {line} is not shown in that hunk")
     m = review.get("map") or {}
     nodes = m.get("nodes", []) or []
     edges = m.get("edges", []) or []
@@ -588,6 +628,21 @@ def load_excerpt(repo_root: Path, ex: dict) -> dict:
     return {"path": ex["path"], "start": ex["start"], "end": end, "rows": rows}
 
 
+def normalize_hunk_notes(value) -> list[dict]:
+    """One string or a list of strings is one note without an anchor (placed after the hunk's last changed line);
+    a list of {side, line, text} is one anchored note per entry, shown under that line."""
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else [value]
+    if items and all(isinstance(it, dict) for it in items):
+        out = []
+        for it in items:
+            text = it.get("text")
+            out.append({"side": it["side"], "line": it["line"], "paragraphs": text if isinstance(text, list) else [text]})
+        return out
+    return [{"side": None, "line": None, "paragraphs": [str(it) for it in items]}]
+
+
 def compose_map(review: dict, snapshot: dict) -> dict:
     repo_root = Path(snapshot["params"]["repo"])
     map_in = review.get("map") or {}
@@ -600,7 +655,7 @@ def compose_map(review: dict, snapshot: dict) -> dict:
     return {"nodes": nodes_out, "edges": map_in.get("edges", []) or []}
 
 
-def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment: dict, only_groups: list[str] | None, approved: list[str], layout: str) -> dict:
+def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment: dict, only_groups: list[str] | None, approved: list[str], layout: str, editor_url: str | None = None) -> dict:
     locale = review.get("locale", "ja")
     header = snapshot["header"]
     file_info = {f["path"]: f for f in review.get("files", [])}
@@ -618,6 +673,7 @@ def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment
     groups_out = []
     for authored_index, g in enumerate(review["groups"]):
         hunk_refs = sorted(g.get("hunks", []) or [], key=lambda hid: (file_rank(hunk_lookup[hid][0]["path"]), hunk_lookup[hid][2]))
+        hunk_notes = g.get("hunk_notes") or {}
         hunks_out = []
         files_out = []
         seen_files: set[str] = set()
@@ -631,10 +687,10 @@ def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment
             if n == 0:
                 meta.update({"old_path": f["old_path"], "old_mode": f["old_mode"], "new_mode": f["new_mode"], "binary": f["binary"], "submodule": f["submodule"]})
             if fragment["kind"] in ("full", "group"):
-                hunks_out.append({"id": hid, "path": f["path"], "layer": info["layer"], "header": hk["header"], "old_start": hk["old_start"], "new_start": hk["new_start"], "rows": hk["rows"], "meta": meta})
+                hunks_out.append({"id": hid, "path": f["path"], "layer": info["layer"], "header": hk["header"], "old_start": hk["old_start"], "new_start": hk["new_start"], "rows": hk["rows"], "meta": meta, "notes": normalize_hunk_notes(hunk_notes.get(hid))})
             if f["path"] not in seen_files:
                 seen_files.add(f["path"])
-                files_out.append({"path": f["path"], "layer": info["layer"], "status": f["status"], "symbols": info.get("symbols", [])})
+                files_out.append({"path": f["path"], "layer": info["layer"], "status": f["status"], "symbols": info.get("symbols", []), "note": info.get("note")})
         entry = {
             "slug": g["slug"],
             "title": g["title"],
@@ -687,7 +743,25 @@ def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment
         "map": compose_map(review, snapshot),
         "expected_groups": all_slugs,
         "groups": groups_out,
+        "editor_url": editor_url,
     }
+
+
+EDITOR_URL_TEMPLATES = {
+    "vscode": "vscode://file/{path}:{line}",
+    "vscode-insiders": "vscode-insiders://file/{path}:{line}",
+    "cursor": "cursor://file/{path}:{line}",
+    "none": None,
+}
+
+
+def resolve_editor_url(option: str) -> str | None:
+    """A named editor, or a custom template with {path} (absolute, forward slashes) and {line}."""
+    if option in EDITOR_URL_TEMPLATES:
+        return EDITOR_URL_TEMPLATES[option]
+    if "{path}" not in option:
+        fail(f"--editor must be one of {', '.join(EDITOR_URL_TEMPLATES)} or a URL template containing {{path}}")
+    return option
 
 
 def serialize_for_script(data: dict) -> str:
@@ -756,7 +830,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     for s in (only or []) + approved:
         if s not in known:
             fail(f"unknown group slug in options: {s}")
-    data = compose_widget_data(review, snapshot, snapshot_id, fragment, only, approved, args.layout)
+    data = compose_widget_data(review, snapshot, snapshot_id, fragment, only, approved, args.layout, resolve_editor_url(args.editor))
     assets = Path(__file__).resolve().parent.parent / "assets"
     template_path = args.template or str(assets / "review-widget.html")
     template = Path(template_path).read_text(encoding="utf-8")
@@ -944,6 +1018,7 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--index", type=int, help="fragment position (1-based)")
     b.add_argument("--total", type=int, help="fragment count")
     b.add_argument("--approved", help="comma-separated slugs to pre-check from earlier valid partial approvals")
+    b.add_argument("--editor", default="vscode", help="open-in-editor links: vscode (default), vscode-insiders, cursor, none, or a URL template with {path} and {line}")
     b.add_argument("--out", required=True, help="output widget HTML path")
     b.set_defaults(func=cmd_build)
 

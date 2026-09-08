@@ -19,7 +19,7 @@ python <skill>/scripts/review_tool.py build --snapshot snapshot.json --review re
 python <skill>/scripts/review_tool.py verify --payload-file message.txt --snapshot snapshot.json --review review.json
 ```
 
-`snapshot` prints the hunk ids you reference from `review.json`. `build` validates the review, refuses to run if the repository changed since the snapshot, sorts groups and hunks top-down, and writes the widget; with `--layout page` it writes the standalone document instead and prints its `absolute` path, and it refuses any `--fragment` other than `full`. `verify` decodes a follow-up payload, validates its schema, recomputes the snapshot id, and prints a decision.
+`build --editor` selects the open-in-editor links on file headers and hunk summaries: `vscode` (default, `vscode://file/{path}:{line}`), `vscode-insiders`, `cursor`, `none`, or a custom URL template with `{path}` (absolute, forward slashes) and `{line}`. The link opens the working-tree file at the hunk's first new line; deleted files get no link. The browser hands the URL to the editor's protocol handler, so the editor must be installed on the machine that opens the page. `snapshot` prints the hunk ids you reference from `review.json`. `build` validates the review, refuses to run if the repository changed since the snapshot, sorts groups and hunks top-down, and writes the widget; with `--layout page` it writes the standalone document instead and prints its `absolute` path, and it refuses any `--fragment` other than `full`. `verify` decodes a follow-up payload, validates its schema, recomputes the snapshot id, and prints a decision.
 
 ## Snapshot identity
 
@@ -42,7 +42,7 @@ Author this file after reading the governing request, acceptance criteria, final
 | `summary` | One string or a list of paragraphs. Overall outcome first, then deploy or data notes that apply to the whole change |
 | `checks[]` | `{name, status, detail?}` with `status` in `passed`, `failed`, `not_run`, `out_of_scope`. Include only checks that were actually run or explicitly skipped |
 | `blockers[]` | `{id, title, detail?, group?}` for unresolved reviewer findings that must block approval. Their ids bind the snapshot id |
-| `files[]` | One entry per changed file: `{path, layer, symbols?, order?}`. Every file in the snapshot needs a layer; see the layer reference |
+| `files[]` | One entry per changed file: `{path, layer, symbols?, order?, note?}`. Every file in the snapshot needs a layer; see the layer reference. `note` is a one-paragraph statement of what changes in that file as a whole; in a group's diff section each file gets a header (path, layer, status, note) above its hunks, and the index and final fragments show the note in the file list instead |
 | `map` | `{nodes[], edges[]}` for the impact map; see the layer reference. Unchanged pass-through nodes carry an `excerpt` `{path, start, end}` whose lines the build reads from the working tree |
 | `groups[]` | Change groups in any order; the build sorts them |
 | `identity_note` | Only for non-git sources |
@@ -60,15 +60,16 @@ Each group:
 | `scope`, `risk` | Scope and risk supported by the actual diff, including unchanged call sites you checked |
 | `impact` | How far the change reaches: callers, tables, external systems, deploy order |
 | `hunks[]` | Hunk ids from the snapshot. Every hunk belongs to exactly one group |
+| `hunk_notes` | Object keyed by hunk id (each id must be in this group's `hunks`). The value is either one note (a string, or a list of paragraphs) shown inline under the hunk's last changed line, or a list of anchored notes `{side: "old"\|"new", line, text}` each shown inline under that exact line, the way a review comment sits under the code it discusses. The line must be visible in the hunk on that side; the build rejects an anchor that is not. Use anchored notes when one hunk carries several changes so each explanation sits next to its lines. State what the block changes in the reader's terms, and quote and translate added text when it is in another language than the review |
 | `evidence[]` | `{name, status, detail?}` checks and tests that bear on this group |
 | `findings[]` | `{title, detail?, resolved}` reviewer findings; unresolved ones also belong in `blockers` when they must block |
 | `limitations[]` | Anything the review could not establish |
 
-Group changes by user-visible behavior, contract, or technical responsibility. Do not make file boundaries the primary grouping when several files implement one change, and do not merge unrelated cleanups into a behavior group.
+Group changes by user-visible behavior, contract, or technical responsibility. Do not make file boundaries the primary grouping when several files implement one change, and do not merge unrelated cleanups into a behavior group. `title`, `outcome`, `why`, `before`, and `after` are the default explanation; the other prose fields are optional and stay empty unless they add something the diff does not show. The screen omits empty fields.
 
 ## Diff layout
 
-The template renders each hunk as a two-column comparison labeled 変更前 and 変更後 (Before and After), with old and new line numbers, a visible sign and theme-aware color on every changed line, unchanged context subordinated, long lines wrapped, and deletion and addition runs paired by position only, padding the shorter side. Binary changes, renames, mode changes, and submodule changes render as paired metadata. Each hunk sits in a native `details` element; the first hunk of each group opens by default and the rest stay one click away. The explanation and the approval controls never collapse.
+The template renders each hunk as a two-column comparison labeled 変更前 and 変更後 (Before and After), with old and new line numbers, a visible sign and theme-aware color on every changed line, unchanged context subordinated, long lines wrapped, and deletion and addition runs paired by position only, padding the shorter side. Binary changes, renames, mode changes, and submodule changes render as paired metadata. Inside a group the hunks are grouped by file, each file under a header that carries its path, layer, status, and `note`. Each hunk sits in a native `details` element; the first hunk of each group and every hunk that has `hunk_notes` open by default, the rest stay one click away. A hunk note renders as a full-width annotation row inside the diff grid, directly under its anchored line (or under the last changed line when the note has no anchor), so the explanation sits next to the code it explains. The group explanation and the approval controls never collapse.
 
 You control the context. Default to `--context 6`; raise it, or add `--function-context`, when the shorter window does not identify the enclosing method, branch, transaction boundary, or processing sequence. Never trim context to save space; split the review instead.
 
