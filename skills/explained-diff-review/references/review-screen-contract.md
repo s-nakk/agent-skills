@@ -85,16 +85,17 @@ Show one concise overall summary followed by the impact map and the change group
 
 The approval unit is the file. In the diff, each group shows one card per file holding the hunks that belong to that group. The card header carries the path, the layer, the status and the fold button; the labeled approval checkbox (確認して承認: <file name>) sits in a footer row below that file's hunks, so a reader who works down the diff meets the control after the code it approves. Folding a file hides its hunks and keeps the footer, so an approved file can still be un-approved. When a file's hunks are split across several groups, each card is approved on its own, the header lists the other groups with a jump button and a ✓ for the ones already approved, and the file counts as approved only when every one of its cards is; the pill reads このグループ分を承認 until then and 承認済み after. Each group also has a bulk checkbox (このグループのファイルをすべて承認) that sets every file of the group and shows an indeterminate state while only some are approved; a group counts as approved when all its files are. Approving a file folds its diff (a 差分を表示 button unfolds it without changing the approval); un-approving unfolds it. Approvals and comments stay local until the user sends them, and the screen keeps them in the browser's localStorage under the snapshot id, so a reload of the same snapshot restores them; a 保存した入力を消去 button under the actions clears that store after a confirmation. Checking a box updates the visible progress (files approved / total files), the approval marker on the group's map nodes, and the group strip.
 
-Comments come in two forms. Each group has a general comment box under its diff. Each diff line also accepts a line comment: hovering a line number shows a + button that opens a comment box directly under that line (under the before or the after column in the two-column layout), the way a pull request review does; the box names the file and the line, keeps its text while the reader moves between groups, and has a remove button. A hunk that holds a line comment opens automatically when it is rendered again.
+Each file has a comment box below its diff beside its approval control. File comments are stored by path; when a file appears in multiple groups, all its boxes share the same text and it is sent once. Previously saved group comments remain editable and sendable under their original group title, labeled Previous group comment; they are never guessed onto a file. New general group comments are not offered. Each diff line also accepts a line comment: hovering a line number shows a + button that opens a comment box directly under that line (under the before or the after column in the two-column layout), the way a pull request review does; the box names the file and the line, keeps its text while the reader moves between groups, and has a remove button. A hunk that holds a line comment opens automatically when it is rendered again.
+
+Hovering or keyboard-focusing any map node highlights its direct incoming and outgoing edges, including their arrowheads, and its neighbors. Unrelated edges dim; a text list shows the directed connections. Clicking retains the selected node and also performs the existing group or excerpt navigation. Hovering another node temporarily previews its connections; leaving restores the selected node. Clear selection restores the usual map. Selection survives map re-layout, and isolated nodes explicitly show No direct connections.
 
 The screen offers a focus mode. Selecting a map node or a group in the strip shows that group alone below the map, with Previous, Next, and Show all controls; Previous and Next follow the top-down order. Summary, checks, blockers, and the map stay visible, every file keeps its own approval checkbox, and the snapshot approval still requires every file, so focusing never hides an unreviewed file from the final decision. A diff layout toggle switches all hunks between two columns and one column; it follows the width by default and keeps an explicit choice across re-renders. A 承認済みのファイルを隠す toggle beside it hides every approved file card so the reader sees only what is still open.
 
 On the standalone page the group list sits in the left pane under the map, with すべて表示 (Show all) as its first entry, and selecting a list entry or a map node replaces the right pane. With nothing selected the right pane starts with the overview (summary, checks, snapshot details) followed by every group.
 
-The three actions are:
+The two actions are:
 
-- レビュー結果を送信 (Send review): sends the approved files (and the groups they complete) and non-empty comments
-- 修正を依頼 (Request changes): sends the current non-empty comments without approving; the widget refuses to send without a comment and shows an accessible message
+- レビュー結果を送信 (Send review): sends the approved files (and the groups they complete) and non-empty comments. The agent answers questions and implements requested changes, reruns checks and independent review, and rebuilds the screen. With no comments it only records partial approvals. The explanation is visible below the buttons. A separate Request changes button is not offered
 - 全体を承認 (Approve snapshot): enabled only when every file is checked and no unresolved blocker is shown
 
 Each action delivers, through the host return channel or the page's copy box, a human-readable line that states counts and the action, never raw comments, followed by one machine-readable line:
@@ -107,8 +108,8 @@ The decoded object has exactly this shape:
 
 ```json
 {
-  "schema_version": 1,
-  "review_action": "request_changes | submit_review | approve_snapshot",
+  "schema_version": 2,
+  "review_action": "submit_review | approve_snapshot",
   "snapshot_id": "<64 lowercase hex characters>",
   "repository": "<canonical absolute repository path>",
   "expected_groups": ["<group slug>"],
@@ -116,19 +117,19 @@ The decoded object has exactly this shape:
   "expected_files": ["<changed file>"],
   "approved_files": ["<changed file>"],
   "comments": [
-    { "group": "<group slug>", "body": "<arbitrary Unicode text>" },
+    { "group": "<group slug>", "body": "<arbitrary Unicode text>", "path": "<changed file>" },
     { "group": "<group slug>", "body": "<arbitrary Unicode text>", "path": "<changed file>", "hunk": "<hunk id>", "side": "old | new", "line": 12 }
   ]
 }
 ```
 
-A comment without an anchor is the group's general comment. A line comment carries all four anchor keys: the file, the hunk id from the snapshot, the side (`old` for the before column, `new` for the after column), and the line number on that side. `verify` rejects an anchor that is incomplete or that names a line the snapshot diff does not show. Comments are ordered by group, then by hunk, then by line.
+A file comment carries `path` but no `hunk`, `side`, or `line`; its path must be in the snapshot and belong to its declared group. A comment without any anchor is preserved group feedback from an older screen. A line comment carries all four anchor keys: the file, the hunk id from the snapshot, the side (`old` for the before column, `new` for the after column), and the line number on that side. `verify` rejects an anchor that is incomplete or that names a line the snapshot diff does not show. File comments are sent once per path in file order, followed by preserved group comments and line comments in group/hunk/line order. Payload version 2 changes submission semantics without changing the version-1 snapshot manifest or its identity. The verifier continues to accept version-1 payloads: their `submit_review` remains answer-only (`answer_submit_review`), and their `request_changes` still requests implementation (`apply_request_changes`). Version-2 `submit_review` returns `process_review_feedback` when comments exist and `record_partial_review` otherwise. Snapshot approval, freshness, and blocker checks are unchanged.
 
 `expected_groups` always carries the full group set and `expected_files` the full snapshot file set, also in split-review fragments; `approved_groups` lists the groups whose files are all approved. `verify` rejects a payload whose `expected_files` differ from the snapshot and reports `missing_files` for an approval that leaves a file unchecked. Sending is a message to the conversation, not a repository or external-service mutation; the widget says so under the buttons.
 
 ## Split reviews
 
-When one screen would be too large, build an `index` fragment (overview, map, group list, no diffs, no actions), one `group` fragment per group or set of groups with `--groups`, `--index`, and `--total`, and finally a `final` fragment (group and file lists with recorded approvals via `--approved` or `--approved-files`, no diffs) that alone offers 全体を承認. All fragments share one snapshot and snapshot id. Group fragments offer only sending and requesting changes.
+When one screen would be too large, build an `index` fragment (overview, map, group list, no diffs, no actions), one `group` fragment per group or set of groups with `--groups`, `--index`, and `--total`, and finally a `final` fragment (group and file lists with recorded approvals via `--approved` or `--approved-files`, no diffs) that alone offers 全体を承認. All fragments share one snapshot and snapshot id. Group fragments offer only Send review, including answering questions and implementing requested changes.
 
 Preserve valid partial approvals and comments in the conversation after verifying each payload against the same snapshot. Once every file is reviewed and blockers are resolved, build the final fragment with `--approved-files` (or `--approved` for whole groups) listing the verified approvals. When the user has approved part of a snapshot and wants to see only what is left, rebuild the full screen with `--approved-files` plus `--exclude-approved`: the approved files keep counting toward the approval and appear in the payload, but their cards are left out of the screen, and each group names the files it left out.
 

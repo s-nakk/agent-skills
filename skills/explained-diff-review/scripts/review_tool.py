@@ -26,6 +26,8 @@ from html import escape as html_escape
 from pathlib import Path
 
 SCHEMA_VERSION = 1
+# Payload semantics are versioned independently so existing snapshot identities remain valid.
+PAYLOAD_VERSION = 2
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 ACTIONS = ("request_changes", "submit_review", "approve_snapshot")
@@ -883,9 +885,13 @@ SIDES = ("old", "new")
 
 
 def validate_line_anchor(c: dict, errors: list[str]) -> None:
-    """Validate the optional line anchor of a comment: all four keys together, or none."""
+    """Accept a file path alone, or require every field of a line anchor."""
     present = [k for k in ANCHOR_KEYS if k in c]
     if not present:
+        return
+    if present == ["path"]:
+        if not isinstance(c["path"], str) or not c["path"]:
+            errors.append("file comment path must be a non-empty string")
         return
     if len(present) != len(ANCHOR_KEYS):
         errors.append("a line comment needs path, hunk, side, and line together")
@@ -914,7 +920,7 @@ def anchored_lines(snapshot: dict) -> set[tuple[str, str, int]]:
 
 
 def validate_payload(p: dict, errors: list[str]) -> None:
-    if p.get("schema_version") != SCHEMA_VERSION:
+    if type(p.get("schema_version")) is not int or p["schema_version"] not in (1, PAYLOAD_VERSION):
         errors.append(f"unsupported schema_version: {p.get('schema_version')}")
     if p.get("review_action") not in ACTIONS:
         errors.append(f"invalid review_action: {p.get('review_action')}")
@@ -1003,7 +1009,11 @@ def cmd_verify(args: argparse.Namespace) -> int:
     result["unresolved_blockers"] = blockers
     result["comments"] = payload["comments"]
     known_lines = anchored_lines(snapshot)
+    path_by_hunk = {hk["id"]: f["path"] for f in snapshot["files"] for hk in f["hunks"]}
+    group_paths = {g["slug"]: {path_by_hunk[hid] for hid in g.get("hunks", [])} for g in review["groups"]}
     for c in payload["comments"]:
+        if "path" in c and c["path"] not in group_paths.get(c["group"], set()):
+            result["errors"].append(f"comment file does not belong to its group: {c['path']} / {c['group']}")
         if "hunk" in c and (c["hunk"], c["side"], c["line"]) not in known_lines:
             result["errors"].append(f"line comment refers to a line outside the snapshot diff: {c['hunk']} {c['side']} {c['line']}")
     if not result["repository_match"]:
@@ -1022,7 +1032,10 @@ def cmd_verify(args: argparse.Namespace) -> int:
     elif action == "request_changes":
         result["decision"] = "apply_request_changes"
     elif action == "submit_review":
-        result["decision"] = "answer_submit_review"
+        if payload["schema_version"] == 1:
+            result["decision"] = "answer_submit_review"
+        else:
+            result["decision"] = "process_review_feedback" if payload["comments"] else "record_partial_review"
     elif result["missing_groups"] or result["missing_files"] or blockers:
         result["decision"] = "reject_approval"
     else:
