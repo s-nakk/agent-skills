@@ -9,7 +9,6 @@ Claude Code と Codex の両方で使う、開発フロー用の自作 Skill 集
 |---|---|---|
 | [`setup-development-policy`](skills/setup-development-policy/SKILL.md) | 既存規約を調べ、Issue・設計承認・Git・Worktree・独立レビュー・保存範囲を初回だけ対話で決める。GLOBAL と Project の AGENTS.md・補助規約を役割別に展開する（Codex 向け） | なし（対話ツールがなければ通常の会話） |
 | [`independent-final-review`](skills/independent-final-review/SKILL.md) | 実装者から独立した reviewer セッションで、PR や commit 差分を read-only のリスク重み付き敵対的検証にかける。再レビューは同じ reviewer を再開する | Codex: `assets/independent-review.config.toml` の profile。Claude Code: subagent |
-| [`change-design-gate`](skills/change-design-gate/SKILL.md) | 変更に着手する前に、処理パイプライン図・具体例・受け入れ条件・テストケースを含む自己完結 HTML を作り、明示承認まで実装を止める | `gh`、`assets/` の HTML と台帳の雛形 |
 | [`github-issue-flow`](skills/github-issue-flow/SKILL.md) | GitHub Issue を起点に、既存 Issue を変更せず worktree 分離・SDD/TDD・検証・draft PR・独立レビューまで進める定型フロー | `gh` |
 | [`thermo-nuclear-code-quality-review`](skills/thermo-nuclear-code-quality-review/SKILL.md) | 抽象化の質、巨大ファイル化、条件分岐の増殖を極めて厳しく審査する保守性レビュー | なし |
 | [`compact-prep`](skills/compact-prep/SKILL.md) | コンテキスト圧縮の前に、採用・却下した判断と次の一手を状態ファイルへ退避する。**Claude Code 専用** | `assets/compact-state-hook.py` を hook 登録（`references/setup.md`） |
@@ -17,7 +16,7 @@ Claude Code と Codex の両方で使う、開発フロー用の自作 Skill 集
 
 初回は `setup-development-policy` でプロジェクトの運用を選択する。Issue なし・ローカル完了も選べるため、以下のフローは全プロジェクトへの必須条件ではない。
 
-Issue と設計ゲートを採用した場合の組み合わせ: `github-issue-flow` で Issue を確定 → `change-design-gate` で設計承認 → 実装 → draft PR → `independent-final-review`。`thermo-nuclear-code-quality-review` は保守性を別軸で見たい時に追加で使う。`explained-diff-review` は実装と独立レビューが終わった変更をユーザーが会話内で確認・承認する時に使う。
+Issue を採用した場合の組み合わせ: `github-issue-flow` で Issue を確定 → 実装 → draft PR → `independent-final-review`。設計・承認の条件は各 repository の規約に従う。`thermo-nuclear-code-quality-review` は保守性を別軸で見たい時に追加で使う。`explained-diff-review` は実装と独立レビューが終わった変更をユーザーが会話内で確認・承認する時に使う。
 
 ## 導入
 
@@ -91,7 +90,6 @@ Skill の更新と、展開済み規約の更新は別操作。更新を依頼�
 
 - `independent-final-review`（Codex）: `skills/independent-final-review/assets/independent-review.config.toml` を `$CODEX_HOME/independent-review.config.toml`（既定 `~/.codex/`）へコピーする。read-only sandbox と GitHub への network だけを許可する profile
 - `compact-prep`（Claude Code のみ）: `skills/compact-prep/references/setup.md` に従って hook を登録する。Codex ではセッション ID の展開と hook がないため動かない
-- `change-design-gate`: 設計成果物の保存先（既定 `work/design-reviews/`）を各 repository の `.gitignore` または `.git/info/exclude` で Git 管理外にする
 - `explained-diff-review`: Python 3 と `git` が PATH にあること。`scripts/review_tool.py` がスナップショット取得、レビューデータの検証、画面生成、返信 payload の検証を行う。画面は `assets/review-widget.html` の固定テンプレートから生成し（`--layout page` の単独 HTML はそれを `assets/review-page.html` で包む）、作業ファイル（`snapshot.json`、`review.json`、`widget.html`）は repository の外に置く。Claude Code は `visualize` MCP server、Codex は同梱の `visualize` skill で表示する
 
 ## プロジェクト固有の規約との関係

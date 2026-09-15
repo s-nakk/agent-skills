@@ -37,7 +37,7 @@ gh issue create --title "<利用者の言葉で 1 行>" --body-file <path> --lab
 gh issue view <issue-number> --json number,title,url,state
 ```
 
-Record the number and URL from the `gh issue view` output. Do not edit the Issue afterwards to add findings, refined acceptance criteria, or links. Later refinements go to the design artifact (for example `change-design-gate`), the PR body, and the completion report.
+Record the number and URL from the `gh issue view` output. Do not edit the Issue afterwards to add findings, refined acceptance criteria, or links. Later refinements go to the design artifact, the PR body, and the completion report.
 
 ## Triage
 
