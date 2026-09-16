@@ -62,4 +62,4 @@ The map shows the edit scope and the important connections at a glance: the path
 
 ### Layout
 
-The widget lays the map out automatically: one lane per layer, nodes packed left to right and wrapped into rows, downward edges drawn as curves, and edges that would cross a node routed through the row gaps and the right gutter. You never compute coordinates. If the rendered map is crowded, reduce nodes rather than accept overlaps.
+The page lays the map out automatically: one lane per layer, nodes packed left to right and wrapped into rows, downward edges drawn as curves, and edges that would cross a node routed through the row gaps and the right gutter. You never compute coordinates. If the rendered map is crowded, reduce nodes rather than accept overlaps.

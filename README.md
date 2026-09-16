@@ -12,11 +12,11 @@ Claude Code と Codex の両方で使う、開発フロー用の自作 Skill 集
 | [`github-issue-flow`](skills/github-issue-flow/SKILL.md) | GitHub Issue を起点に、既存 Issue を変更せず worktree 分離・SDD/TDD・検証・draft PR・独立レビューまで進める定型フロー | `gh` |
 | [`thermo-nuclear-code-quality-review`](skills/thermo-nuclear-code-quality-review/SKILL.md) | 抽象化の質、巨大ファイル化、条件分岐の増殖を極めて厳しく審査する保守性レビュー | なし |
 | [`compact-prep`](skills/compact-prep/SKILL.md) | コンテキスト圧縮の前に、採用・却下した判断と次の一手を状態ファイルへ退避する。**Claude Code 専用** | `assets/compact-state-hook.py` を hook 登録（`references/setup.md`） |
-| [`explained-diff-review`](skills/explained-diff-review/SKILL.md) | 実装完了後に、変更を画面 → API → アプリケーション → 永続化の順に並べた説明付きレビュー画面を会話内に表示する。影響範囲マップ、2 列差分、グループ単位の承認とコメント、差分の行に差し込む行コメント、スナップショット ID による承認の同一性検証を含む。差分にはファイルごとの見出し（概要と「エディタで開く」リンク、`--editor` で URL スキームを選択）と、hunk の該当行の直下に差し込む解説（`hunk_notes`、行アンカー対応）を置ける。対になる削除行と追加行では実際に変わったトークンだけを行内で強調する。承認の単位はファイルで、各ファイル見出しのチェックとグループ単位の一括チェックがあり、payload は `approved_files` を運ぶ。画面の言語は生成時に `locale` で日本語 / 英語を選ぶ。会話内の幅が足りない時は `--layout page` で、左にマップとグループ一覧、右に説明と差分を置く 2 ペインの単独 HTML を生成できる（送信はメッセージのコピー & 貼り付け） | Python 3、`git`。Claude Code: `visualize` MCP の `show_widget`。Codex: 同梱 `visualize` skill |
+| [`explained-diff-review`](skills/explained-diff-review/SKILL.md) | 実装完了後に、変更を画面 → API → アプリケーション → 永続化の順に並べた説明付きレビュー画面を単独 HTML として生成する（左にマップとグループ一覧、右に説明と差分の 2 ペイン。送信はメッセージのコピー & 貼り付け）。影響範囲マップ、2 列差分、ファイル単位の承認とコメント、差分の行に差し込む行コメント、スナップショット ID による承認の同一性検証を含む。差分にはファイルごとの見出し（概要と「エディタで開く」リンク、`--editor` で URL スキームを選択）と、hunk の該当行の直下に差し込む解説（`hunk_notes`、行アンカー対応）を置ける。対になる削除行と追加行では実際に変わったトークンだけを行内で強調する。承認の単位はファイルで、各ファイルのチェックとグループ単位の一括チェックがあり、payload は `approved_files` を運ぶ。CRUD が絡む変更では「データの流れ」タブに、操作ごとにテーブル → エンティティ → 取得モデル / コマンド → API → 生成クライアント型 → 画面の型 → 画面の各段をフィールド一覧で並べ、段の間をフィールド単位の線（そのまま / 改名 / 型変換 / 計算）で結び、生まれる・止まるフィールドに印を付ける（`data_flows`）。画面の言語は生成時に `locale` で日本語 / 英語を選ぶ | Python 3、`git`。生成した HTML をブラウザで開く（localhost 配信可） |
 
 初回は `setup-development-policy` でプロジェクトの運用を選択する。Issue なし・ローカル完了も選べるため、以下のフローは全プロジェクトへの必須条件ではない。
 
-Issue を採用した場合の組み合わせ: `github-issue-flow` で Issue を確定 → 実装 → draft PR → `independent-final-review`。設計・承認の条件は各 repository の規約に従う。`thermo-nuclear-code-quality-review` は保守性を別軸で見たい時に追加で使う。`explained-diff-review` は実装と独立レビューが終わった変更をユーザーが会話内で確認・承認する時に使う。
+Issue を採用した場合の組み合わせ: `github-issue-flow` で Issue を確定 → 実装 → draft PR → `independent-final-review`。設計・承認の条件は各 repository の規約に従う。`thermo-nuclear-code-quality-review` は保守性を別軸で見たい時に追加で使う。`explained-diff-review` は実装と独立レビューが終わった変更をユーザーがブラウザで確認・承認する時に使う。
 
 ## 導入
 
@@ -90,7 +90,7 @@ Skill の更新と、展開済み規約の更新は別操作。更新を依頼�
 
 - `independent-final-review`（Codex）: `skills/independent-final-review/assets/independent-review.config.toml` を `$CODEX_HOME/independent-review.config.toml`（既定 `~/.codex/`）へコピーする。read-only sandbox と GitHub への network だけを許可する profile
 - `compact-prep`（Claude Code のみ）: `skills/compact-prep/references/setup.md` に従って hook を登録する。Codex ではセッション ID の展開と hook がないため動かない
-- `explained-diff-review`: Python 3 と `git` が PATH にあること。`scripts/review_tool.py` がスナップショット取得、レビューデータの検証、画面生成、返信 payload の検証を行う。画面は `assets/review-widget.html` の固定テンプレートから生成し（`--layout page` の単独 HTML はそれを `assets/review-page.html` で包む）、作業ファイル（`snapshot.json`、`review.json`、`widget.html`）は repository の外に置く。Claude Code は `visualize` MCP server、Codex は同梱の `visualize` skill で表示する
+- `explained-diff-review`: Python 3 と `git` が PATH にあること。`scripts/review_tool.py` がスナップショット取得、レビューデータの検証、画面生成、返信 payload の検証を行う。画面は `assets/review-page.html` の固定テンプレートから単独 HTML として生成し、作業ファイル（`snapshot.json`、`review.json`、生成した HTML）は repository の外に置く。ブラウザで直接開くか、localhost で配信して表示する
 
 ## プロジェクト固有の規約との関係
 
@@ -100,7 +100,7 @@ Skill の更新と、展開済み規約の更新は別操作。更新を依頼�
 
 - Skill 本文と commit message は日本語。技術識別子は原文のまま
 - `github-issue-flow` と `thermo-nuclear-code-quality-review` の本文は英語（前者は `gh` の出力や GitHub の用語と対応させるため、後者はレビュー文言をそのまま英語コメントに使えるようにするため）
-- `explained-diff-review` の本文と参照文書も英語（両ホストの API 名と対応させるため。画面の言語は生成時に `locale` で選ぶ）
+- `explained-diff-review` の本文と参照文書も英語（両ホストで同じ文書を使うため。画面の言語は生成時に `locale` で選ぶ）
 
 ## License
 

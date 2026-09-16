@@ -3,8 +3,8 @@
 
 Subcommands:
   snapshot  Capture the deterministic review manifest and the contextual diff of a git repository.
-  build     Validate the authored review JSON, bind it to the snapshot, and emit the widget HTML
-            (an inline fragment by default, or a standalone two-pane page with --layout page).
+  build     Validate the authored review JSON, bind it to the snapshot, and emit the standalone
+            review page (two-pane diff review plus the data-flow tab when the review declares flows).
   verify    Validate a follow-up payload against the current repository state.
 
 Standard library only. Requires git on PATH.
@@ -26,23 +26,26 @@ from html import escape as html_escape
 from pathlib import Path
 
 SCHEMA_VERSION = 1
+# Payload semantics are versioned independently so existing snapshot identities remain valid.
+PAYLOAD_VERSION = 2
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 ACTIONS = ("request_changes", "submit_review", "approve_snapshot")
 CHECK_STATUSES = ("passed", "failed", "not_run", "out_of_scope")
 NODE_STATUSES = ("modified", "added", "deleted", "renamed", "unchanged")
-FRAGMENT_KINDS = ("full", "index", "group", "final")
-LAYOUTS = ("widget", "page")
+FLOW_DIRECTIONS = ("read", "write")
+STAGE_KINDS = ("table", "entity", "dto", "response", "request", "command", "client_type", "view_model", "screen", "other")
+FIELD_STATUSES = ("modified", "added", "deleted", "unchanged")
+MAPPING_KINDS = ("copy", "rename", "convert", "compute")
 MAP_NODE_BUDGET = 16
 MAP_EDGE_BUDGET = 24
 EXCERPT_MAX_LINES = 120
 # Layer ranks are spaced by 10; a downward edge spanning more than this usually skips a pass-through layer.
 LAYER_SKIP_WARN = 20
 NON_CODE_RANK = 70
-PLACEHOLDER = "__REVIEW_DATA_JSON__"
+DATA_PLACEHOLDER = "__REVIEW_DATA_JSON__"
 PAGE_TITLE_PLACEHOLDER = "__REVIEW_TITLE__"
 PAGE_LANG_PLACEHOLDER = "__REVIEW_LANG__"
-PAGE_BODY_PLACEHOLDER = "__REVIEW_WIDGET_HTML__"
 
 # key, rank, Japanese label, English label. Rank orders layers from the entry point toward storage.
 LAYERS = [
@@ -475,6 +478,145 @@ def validate_texts(review: dict, errors: list[str]) -> None:
                     errors.append(f"{where}: use a string, a list of paragraphs, or a list of {{side, line, text}} anchors; do not mix")
     for i, f in enumerate(review.get("files", []) or []):
         check_text(f.get("note"), f"files[{i}].note", errors)
+    for fl in review.get("data_flows", []) or []:
+        where = f"data_flows[{fl.get('slug')}]"
+        check_text(fl.get("title"), f"{where}.title", errors, allow_list=False)
+        check_text(fl.get("summary"), f"{where}.summary", errors)
+        for st in fl.get("stages", []) or []:
+            sw = f"{where}.stages[{st.get('id')}]"
+            check_text(st.get("label"), f"{sw}.label", errors, allow_list=False)
+            check_text(st.get("note"), f"{sw}.note", errors)
+
+            def walk(fields, prefix):
+                for f in fields or []:
+                    fw = f"{sw}.fields[{prefix}{f.get('name')}]"
+                    check_text(f.get("type"), f"{fw}.type", errors, allow_list=False)
+                    check_text(f.get("note"), f"{fw}.note", errors, allow_list=False)
+                    walk(f.get("fields"), f"{prefix}{f.get('name')}.")
+
+            walk(st.get("fields"), "")
+        for i, m in enumerate(fl.get("mappings", []) or []):
+            check_text(m.get("note"), f"{where}.mappings[{i}].note", errors, allow_list=False)
+
+
+def validate_data_flows(review: dict, snapshot: dict, group_slugs: set[str], errors: list[str], warnings: list[str]) -> None:
+    """A flow is one operation's path through the typed shapes between screen and storage.
+
+    Stages are authored in the order the data moves; every mapping joins a field of one stage to a
+    field of the next stage, so the screen can draw a continuous line per field. The identity of the
+    snapshot does not cover flows: they explain, they are not approved.
+    """
+    flows = review.get("data_flows")
+    if flows is None:
+        return
+    if not isinstance(flows, list):
+        errors.append("data_flows must be a list")
+        return
+    repo_root = Path(snapshot["params"]["repo"])
+    seen_flows: set[str] = set()
+    for fl in flows:
+        slug = fl.get("slug")
+        if not isinstance(slug, str) or not SLUG_RE.match(slug):
+            errors.append(f"invalid data flow slug: {slug!r}")
+            continue
+        where = f"data_flows[{slug}]"
+        if slug in seen_flows:
+            errors.append(f"duplicate data flow slug: {slug}")
+        seen_flows.add(slug)
+        if not fl.get("title"):
+            errors.append(f"{where} needs a title")
+        if fl.get("direction") not in FLOW_DIRECTIONS:
+            errors.append(f"{where}.direction must be one of {', '.join(FLOW_DIRECTIONS)}: {fl.get('direction')!r}")
+        stages = fl.get("stages")
+        if not isinstance(stages, list) or len(stages) < 2:
+            errors.append(f"{where} needs at least two stages")
+            continue
+        stage_index: dict[str, int] = {}
+        field_keys: set[str] = set()
+        ranks: list[int] = []
+        for i, st in enumerate(stages):
+            sid = st.get("id")
+            if not isinstance(sid, str) or not SLUG_RE.match(sid):
+                errors.append(f"{where}.stages[{i}] needs an id matching {SLUG_RE.pattern}")
+                continue
+            if sid in stage_index:
+                errors.append(f"{where} has duplicate stage id: {sid}")
+            stage_index[sid] = i
+            sw = f"{where}.stages[{sid}]"
+            if not st.get("label"):
+                errors.append(f"{sw} needs a label")
+            if st.get("kind") not in STAGE_KINDS:
+                errors.append(f"{sw}.kind must be one of {', '.join(STAGE_KINDS)}: {st.get('kind')!r}")
+            if st.get("layer") not in LAYER_INDEX:
+                errors.append(f"{sw} has unknown layer: {st.get('layer')}")
+            else:
+                ranks.append(LAYER_INDEX[st["layer"]][0])
+            if st.get("status", "unchanged") not in NODE_STATUSES:
+                errors.append(f"{sw} has invalid status: {st.get('status')}")
+            if st.get("group") and st["group"] not in group_slugs:
+                errors.append(f"{sw} refers to unknown group: {st.get('group')}")
+            path = st.get("path")
+            if path is not None and (not isinstance(path, str) or not path):
+                errors.append(f"{sw}.path must be a non-empty string")
+            ex = st.get("excerpt")
+            if ex is not None:
+                if not path:
+                    errors.append(f"{sw}.excerpt needs the stage path")
+                elif not isinstance(ex, dict) or not isinstance(ex.get("start"), int) or not isinstance(ex.get("end"), int) or ex["start"] < 1 or ex["end"] < ex["start"]:
+                    errors.append(f"{sw}.excerpt must be {{start, end}} with 1 <= start <= end")
+                elif not (repo_root / path).is_file():
+                    errors.append(f"{sw}.path not found in the working tree: {path}")
+                elif ex["end"] - ex["start"] + 1 > EXCERPT_MAX_LINES:
+                    warnings.append(f"{sw}.excerpt spans {ex['end'] - ex['start'] + 1} lines; keep excerpts within {EXCERPT_MAX_LINES}")
+            if not isinstance(st.get("fields"), list) or not st["fields"]:
+                errors.append(f"{sw} needs a non-empty fields list")
+                continue
+
+            def walk(fields, prefix: str) -> None:
+                names: set[str] = set()
+                for f in fields:
+                    name = f.get("name") if isinstance(f, dict) else None
+                    if not isinstance(name, str) or not name or "." in name:
+                        errors.append(f"{sw}.fields[{prefix}{name!r}] needs a name without dots")
+                        continue
+                    if name in names:
+                        errors.append(f"{sw}.fields has duplicate field: {prefix}{name}")
+                    names.add(name)
+                    if f.get("status", "unchanged") not in FIELD_STATUSES:
+                        errors.append(f"{sw}.fields[{prefix}{name}] has invalid status: {f.get('status')}")
+                    field_keys.add(f"{sid}.{prefix}{name}")
+                    nested = f.get("fields")
+                    if nested is not None:
+                        if not isinstance(nested, list):
+                            errors.append(f"{sw}.fields[{prefix}{name}].fields must be a list")
+                        else:
+                            walk(nested, f"{prefix}{name}.")
+
+            walk(st["fields"], "")
+        if len(ranks) == len(stages):
+            steps = [b - a for a, b in zip(ranks, ranks[1:])]
+            if fl.get("direction") == "read" and any(s > 0 for s in steps):
+                warnings.append(f"{where} is a read flow but a stage moves toward storage; a read flow lists stages from storage to the screen")
+            if fl.get("direction") == "write" and any(s < 0 for s in steps):
+                warnings.append(f"{where} is a write flow but a stage moves toward the screen; a write flow lists stages from the screen to storage")
+        for i, m in enumerate(fl.get("mappings", []) or []):
+            mw = f"{where}.mappings[{i}]"
+            if not isinstance(m, dict):
+                errors.append(f"{mw} must be an object")
+                continue
+            if m.get("kind") not in MAPPING_KINDS:
+                errors.append(f"{mw}.kind must be one of {', '.join(MAPPING_KINDS)}: {m.get('kind')!r}")
+            ok = True
+            for end in ("from", "to"):
+                ref = m.get(end)
+                if not isinstance(ref, str) or ref not in field_keys:
+                    errors.append(f"{mw}.{end} does not name a stage field (stageId.field[.subfield]): {ref!r}")
+                    ok = False
+            if not ok:
+                continue
+            a, b = stage_index[m["from"].split(".", 1)[0]], stage_index[m["to"].split(".", 1)[0]]
+            if b != a + 1:
+                errors.append(f"{mw} must join a field to a field of the next stage ({m['from']} -> {m['to']})")
 
 
 def validate_review(review: dict, snapshot: dict, errors: list[str], warnings: list[str]) -> None:
@@ -613,6 +755,7 @@ def validate_review(review: dict, snapshot: dict, errors: list[str], warnings: l
         warnings.append(f"map has {len(edges)} edges; keep within {MAP_EDGE_BUDGET}")
     if nodes and not any(n.get("group") for n in nodes):
         warnings.append("no map node links to a group; changed nodes should carry the slug of the group that explains them")
+    validate_data_flows(review, snapshot, seen, errors, warnings)
 
 
 def load_excerpt(repo_root: Path, ex: dict) -> dict:
@@ -655,7 +798,22 @@ def compose_map(review: dict, snapshot: dict) -> dict:
     return {"nodes": nodes_out, "edges": map_in.get("edges", []) or []}
 
 
-def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment: dict, only_groups: list[str] | None, approved: list[str], layout: str, editor_url: str | None = None, approved_files: list[str] | None = None, exclude_approved: bool = False) -> dict:
+def compose_flows(review: dict, snapshot: dict) -> list[dict]:
+    """Stages keep their authored order; an excerpt is read from the working tree like a map node's."""
+    repo_root = Path(snapshot["params"]["repo"])
+    out = []
+    for fl in review.get("data_flows", []) or []:
+        stages = []
+        for st in fl.get("stages", []) or []:
+            stage = dict(st)
+            if st.get("excerpt"):
+                stage["excerpt"] = load_excerpt(repo_root, {"path": st["path"], "start": st["excerpt"]["start"], "end": st["excerpt"]["end"]})
+            stages.append(stage)
+        out.append({"slug": fl["slug"], "title": fl["title"], "direction": fl["direction"], "summary": fl.get("summary"), "stages": stages, "mappings": fl.get("mappings", []) or []})
+    return out
+
+
+def compose_page_data(review: dict, snapshot: dict, snapshot_id: str, approved: list[str], editor_url: str | None = None, approved_files: list[str] | None = None, exclude_approved: bool = False) -> dict:
     locale = review.get("locale", "ja")
     header = snapshot["header"]
     file_info = {f["path"]: f for f in review.get("files", [])}
@@ -694,8 +852,7 @@ def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment
             meta = {"status": f["status"]}
             if n == 0:
                 meta.update({"old_path": f["old_path"], "old_mode": f["old_mode"], "new_mode": f["new_mode"], "binary": f["binary"], "submodule": f["submodule"]})
-            if fragment["kind"] in ("full", "group"):
-                hunks_out.append({"id": hid, "path": f["path"], "layer": info["layer"], "header": hk["header"], "old_start": hk["old_start"], "new_start": hk["new_start"], "rows": hk["rows"], "meta": meta, "notes": normalize_hunk_notes(hunk_notes.get(hid))})
+            hunks_out.append({"id": hid, "path": f["path"], "layer": info["layer"], "header": hk["header"], "old_start": hk["old_start"], "new_start": hk["new_start"], "rows": hk["rows"], "meta": meta, "notes": normalize_hunk_notes(hunk_notes.get(hid))})
             if f["path"] not in seen_files:
                 seen_files.add(f["path"])
                 files_out.append({"path": f["path"], "layer": info["layer"], "status": f["status"], "symbols": info.get("symbols", []), "note": info.get("note")})
@@ -724,15 +881,12 @@ def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment
     groups_out.sort(key=lambda e: e["_rank"])
     for e in groups_out:
         e.pop("_rank")
-    if only_groups is not None:
-        groups_out = [e for e in groups_out if e["slug"] in only_groups]
     present_layers = {info["layer"] for info in file_info.values()} | {n["layer"] for n in (review.get("map") or {}).get("nodes", []) or []}
+    present_layers |= {st["layer"] for fl in review.get("data_flows", []) or [] for st in fl.get("stages", []) or []}
     layers_out = [{"key": key, "rank": rank, "ja": ja, "en": en} for key, rank, ja, en in LAYERS if key in present_layers]
     return {
         "schema_version": SCHEMA_VERSION,
         "locale": locale,
-        "layout": layout,
-        "fragment": fragment,
         "snapshot": {
             "id": snapshot_id,
             "short_id": snapshot_id[:12],
@@ -750,6 +904,7 @@ def compose_widget_data(review: dict, snapshot: dict, snapshot_id: str, fragment
         "blockers": review.get("blockers", []) or [],
         "layers": layers_out,
         "map": compose_map(review, snapshot),
+        "data_flows": compose_flows(review, snapshot),
         "expected_groups": all_slugs,
         "expected_files": sorted(snap_files, key=file_rank),
         "approved_files": sorted(approved_set, key=file_rank),
@@ -780,27 +935,26 @@ def serialize_for_script(data: dict) -> str:
     return text.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
 
 
-PAGE_PLACEHOLDER_RE = re.compile("|".join(re.escape(p) for p in (PAGE_TITLE_PLACEHOLDER, PAGE_LANG_PLACEHOLDER, PAGE_BODY_PLACEHOLDER)))
+PAGE_PLACEHOLDER_RE = re.compile("|".join(re.escape(p) for p in (PAGE_TITLE_PLACEHOLDER, PAGE_LANG_PLACEHOLDER, DATA_PLACEHOLDER)))
 
 
-def wrap_page(fragment_html: str, review: dict, wrapper_path: str) -> str:
-    """Embed the built fragment in the standalone document wrapper.
+def render_page(data: dict, review: dict, template_path: str) -> str:
+    """Bind the review data to the fixed page template.
 
-    The wrapper carries only document-level markup and the control baseline a host would
-    otherwise provide; every review element is still created by the fixed widget script.
-    All placeholders are substituted in one pass so that inserted text (the title, or review
-    data inside the fragment) is never rescanned for another placeholder.
+    The template is the only executable code the screen contains; every review element is created
+    by its script from the JSON placed in the data element. All placeholders are substituted in one
+    pass so that inserted text (the title, or review data) is never rescanned for another placeholder.
     """
-    wrapper = Path(wrapper_path).read_text(encoding="utf-8")
-    for placeholder in (PAGE_TITLE_PLACEHOLDER, PAGE_LANG_PLACEHOLDER, PAGE_BODY_PLACEHOLDER):
-        if wrapper.count(placeholder) != 1:
+    template = Path(template_path).read_text(encoding="utf-8")
+    for placeholder in (PAGE_TITLE_PLACEHOLDER, PAGE_LANG_PLACEHOLDER, DATA_PLACEHOLDER):
+        if template.count(placeholder) != 1:
             fail(f"page template must contain {placeholder} exactly once")
     values = {
         PAGE_TITLE_PLACEHOLDER: html_escape(str(review.get("title", "")), quote=True),
         PAGE_LANG_PLACEHOLDER: html_escape(review.get("locale", "ja"), quote=True),
-        PAGE_BODY_PLACEHOLDER: fragment_html,
+        DATA_PLACEHOLDER: serialize_for_script(data),
     }
-    return PAGE_PLACEHOLDER_RE.sub(lambda m: values[m.group(0)], wrapper)
+    return PAGE_PLACEHOLDER_RE.sub(lambda m: values[m.group(0)], template)
 
 
 def compute_snapshot_id(snapshot: dict, review: dict) -> str:
@@ -827,37 +981,22 @@ def cmd_build(args: argparse.Namespace) -> int:
     for w in warnings:
         print("warning: " + w, file=sys.stderr)
     snapshot_id = compute_snapshot_id(snapshot, review)
-    if args.layout == "page" and args.fragment != "full":
-        fail("--layout page renders the whole review on one page; split reviews are for the inline widget only")
-    fragment = {"kind": args.fragment}
-    if args.fragment == "group":
-        if not args.groups:
-            fail("--groups is required for a group fragment")
-        fragment["index"] = args.index
-        fragment["total"] = args.total
-    only = [s.strip() for s in args.groups.split(",")] if args.groups else None
     approved = [s.strip() for s in args.approved.split(",")] if args.approved else []
     known = {g["slug"] for g in review["groups"]}
-    for s in (only or []) + approved:
+    for s in approved:
         if s not in known:
-            fail(f"unknown group slug in options: {s}")
+            fail(f"unknown group slug in --approved: {s}")
     approved_files = [s.strip() for s in args.approved_files.split(",")] if args.approved_files else []
     snap_paths = {f["path"] for f in snapshot["files"]}
     for p in approved_files:
         if p not in snap_paths:
             fail(f"unknown file in --approved-files: {p}")
-    data = compose_widget_data(review, snapshot, snapshot_id, fragment, only, approved, args.layout, resolve_editor_url(args.editor), approved_files, args.exclude_approved)
-    assets = Path(__file__).resolve().parent.parent / "assets"
-    template_path = args.template or str(assets / "review-widget.html")
-    template = Path(template_path).read_text(encoding="utf-8")
-    if template.count(PLACEHOLDER) != 1:
-        fail(f"template must contain {PLACEHOLDER} exactly once")
-    html = template.replace(PLACEHOLDER, serialize_for_script(data))
-    if args.layout == "page":
-        html = wrap_page(html, review, args.page_template or str(assets / "review-page.html"))
+    data = compose_page_data(review, snapshot, snapshot_id, approved, resolve_editor_url(args.editor), approved_files, args.exclude_approved)
+    template_path = args.template or str(Path(__file__).resolve().parent.parent / "assets" / "review-page.html")
+    html = render_page(data, review, template_path)
     out_path = Path(args.out)
-    out_path.write_text(html, encoding="utf-8")
-    print(json.dumps({"out": args.out, "absolute": str(out_path.resolve()), "layout": args.layout, "snapshot_id": snapshot_id, "short_id": snapshot_id[:12], "fragment": fragment, "group_order": [g["slug"] for g in data["groups"]], "bytes": len(html.encode("utf-8")), "warnings": warnings}, ensure_ascii=False, indent=1))
+    out_path.write_text(html, encoding="utf-8", newline="\n")
+    print(json.dumps({"out": args.out, "absolute": str(out_path.resolve()), "snapshot_id": snapshot_id, "short_id": snapshot_id[:12], "group_order": [g["slug"] for g in data["groups"]], "data_flows": [fl["slug"] for fl in data["data_flows"]], "bytes": len(html.encode("utf-8")), "warnings": warnings}, ensure_ascii=False, indent=1))
     return 0
 
 
@@ -883,9 +1022,13 @@ SIDES = ("old", "new")
 
 
 def validate_line_anchor(c: dict, errors: list[str]) -> None:
-    """Validate the optional line anchor of a comment: all four keys together, or none."""
+    """Accept a file path alone, or require every field of a line anchor."""
     present = [k for k in ANCHOR_KEYS if k in c]
     if not present:
+        return
+    if present == ["path"]:
+        if not isinstance(c["path"], str) or not c["path"]:
+            errors.append("file comment path must be a non-empty string")
         return
     if len(present) != len(ANCHOR_KEYS):
         errors.append("a line comment needs path, hunk, side, and line together")
@@ -914,7 +1057,7 @@ def anchored_lines(snapshot: dict) -> set[tuple[str, str, int]]:
 
 
 def validate_payload(p: dict, errors: list[str]) -> None:
-    if p.get("schema_version") != SCHEMA_VERSION:
+    if type(p.get("schema_version")) is not int or p["schema_version"] not in (1, PAYLOAD_VERSION):
         errors.append(f"unsupported schema_version: {p.get('schema_version')}")
     if p.get("review_action") not in ACTIONS:
         errors.append(f"invalid review_action: {p.get('review_action')}")
@@ -1003,7 +1146,11 @@ def cmd_verify(args: argparse.Namespace) -> int:
     result["unresolved_blockers"] = blockers
     result["comments"] = payload["comments"]
     known_lines = anchored_lines(snapshot)
+    path_by_hunk = {hk["id"]: f["path"] for f in snapshot["files"] for hk in f["hunks"]}
+    group_paths = {g["slug"]: {path_by_hunk[hid] for hid in g.get("hunks", [])} for g in review["groups"]}
     for c in payload["comments"]:
+        if "path" in c and c["path"] not in group_paths.get(c["group"], set()):
+            result["errors"].append(f"comment file does not belong to its group: {c['path']} / {c['group']}")
         if "hunk" in c and (c["hunk"], c["side"], c["line"]) not in known_lines:
             result["errors"].append(f"line comment refers to a line outside the snapshot diff: {c['hunk']} {c['side']} {c['line']}")
     if not result["repository_match"]:
@@ -1022,7 +1169,10 @@ def cmd_verify(args: argparse.Namespace) -> int:
     elif action == "request_changes":
         result["decision"] = "apply_request_changes"
     elif action == "submit_review":
-        result["decision"] = "answer_submit_review"
+        if payload["schema_version"] == 1:
+            result["decision"] = "answer_submit_review"
+        else:
+            result["decision"] = "process_review_feedback" if payload["comments"] else "record_partial_review"
     elif result["missing_groups"] or result["missing_files"] or blockers:
         result["decision"] = "reject_approval"
     else:
@@ -1047,21 +1197,15 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--out", required=True, help="output snapshot JSON path")
     s.set_defaults(func=cmd_snapshot)
 
-    b = sub.add_parser("build", help="validate review JSON and emit widget HTML")
+    b = sub.add_parser("build", help="validate review JSON and emit the standalone review page")
     b.add_argument("--snapshot", required=True)
     b.add_argument("--review", required=True)
-    b.add_argument("--template", help="widget template (default: assets/review-widget.html next to this script)")
-    b.add_argument("--layout", choices=LAYOUTS, default="widget", help="widget: inline fragment for the host surface (default); page: standalone two-pane HTML document")
-    b.add_argument("--page-template", help="document wrapper for --layout page (default: assets/review-page.html next to this script)")
-    b.add_argument("--fragment", choices=FRAGMENT_KINDS, default="full")
-    b.add_argument("--groups", help="comma-separated slugs included in a group fragment")
-    b.add_argument("--index", type=int, help="fragment position (1-based)")
-    b.add_argument("--total", type=int, help="fragment count")
+    b.add_argument("--template", help="page template (default: assets/review-page.html next to this script)")
     b.add_argument("--approved", help="comma-separated group slugs whose files are pre-checked from earlier valid partial approvals")
     b.add_argument("--approved-files", help="comma-separated file paths to pre-check from earlier valid partial approvals")
     b.add_argument("--exclude-approved", action="store_true", help="leave the diff of pre-approved files out of the screen; they still count as approved in the payload")
     b.add_argument("--editor", default="vscode", help="open-in-editor links: vscode (default), vscode-insiders, cursor, none, or a URL template with {path} and {line}")
-    b.add_argument("--out", required=True, help="output widget HTML path")
+    b.add_argument("--out", required=True, help="output HTML path")
     b.set_defaults(func=cmd_build)
 
     v = sub.add_parser("verify", help="validate a follow-up payload against the current repository")
