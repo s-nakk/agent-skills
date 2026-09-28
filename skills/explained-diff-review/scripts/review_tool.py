@@ -21,6 +21,7 @@ import re
 import stat
 import subprocess
 import sys
+import urllib.parse
 from datetime import datetime
 from html import escape as html_escape
 from pathlib import Path
@@ -813,7 +814,7 @@ def compose_flows(review: dict, snapshot: dict) -> list[dict]:
     return out
 
 
-def compose_page_data(review: dict, snapshot: dict, snapshot_id: str, approved: list[str], editor_url: str | None = None, approved_files: list[str] | None = None, exclude_approved: bool = False) -> dict:
+def compose_page_data(review: dict, snapshot: dict, snapshot_id: str, approved: list[str], editors: list[dict] | None = None, editor_default: str | None = None, approved_files: list[str] | None = None, exclude_approved: bool = False) -> dict:
     locale = review.get("locale", "ja")
     header = snapshot["header"]
     file_info = {f["path"]: f for f in review.get("files", [])}
@@ -909,25 +910,53 @@ def compose_page_data(review: dict, snapshot: dict, snapshot_id: str, approved: 
         "expected_files": sorted(snap_files, key=file_rank),
         "approved_files": sorted(approved_set, key=file_rank),
         "groups": groups_out,
-        "editor_url": editor_url,
+        "editors": editors or [],
+        "editor_default": editor_default,
     }
 
 
+# Placeholders the page fills per link: {path} (absolute, forward slashes), {relpath} (repository-relative),
+# {relpath_url} (repository-relative, URL-encoded), {line} (1-based), {line0} (0-based). {project} is filled at build time.
+# Rider goes through the jetbrains:// scheme that JetBrains Toolbox registers; like JetBrains' own browser extension
+# (src/content/services/Toolbox.js), it takes a project-relative path with 0-based line and column indexes.
 EDITOR_URL_TEMPLATES = {
     "vscode": "vscode://file/{path}:{line}",
     "vscode-insiders": "vscode-insiders://file/{path}:{line}",
     "cursor": "cursor://file/{path}:{line}",
+    "rider": "jetbrains://rider/navigate/reference?project={project}&path={relpath_url}:{line0}:0",
     "none": None,
 }
+EDITOR_LABELS = {"vscode": "VS Code", "vscode-insiders": "VS Code Insiders", "cursor": "Cursor", "rider": "Rider", "custom": "Custom"}
+EDITOR_PLACEHOLDERS = ("{path}", "{relpath}", "{relpath_url}")
 
 
-def resolve_editor_url(option: str) -> str | None:
-    """A named editor, or a custom template with {path} (absolute, forward slashes) and {line}."""
-    if option in EDITOR_URL_TEMPLATES:
-        return EDITOR_URL_TEMPLATES[option]
-    if "{path}" not in option:
-        fail(f"--editor must be one of {', '.join(EDITOR_URL_TEMPLATES)} or a URL template containing {{path}}")
-    return option
+def default_jetbrains_project(repo_root: str) -> str:
+    """The name JetBrains Toolbox matches against a recent project: the single solution in the repository root, else the folder name."""
+    root = Path(repo_root)
+    solutions = sorted(p.stem for p in root.iterdir() if p.is_file() and p.suffix in (".sln", ".slnx"))
+    return solutions[0] if len(solutions) == 1 else root.name
+
+
+def resolve_editors(default: str, offered: str, jetbrains_project: str) -> tuple[list[dict], str | None]:
+    """The editors the page lets the reader choose from, and the one selected until the reader picks another."""
+    def entry(key: str, template: str) -> dict:
+        return {"id": key, "label": EDITOR_LABELS[key], "url": template.replace("{project}", urllib.parse.quote(jetbrains_project, safe=""))}
+
+    if default == "none":
+        return [], None
+    names = [n.strip() for n in offered.split(",") if n.strip()]
+    for n in names:
+        if n not in EDITOR_URL_TEMPLATES or n == "none":
+            fail(f"--editors takes names from {', '.join(k for k in EDITOR_URL_TEMPLATES if k != 'none')}: {n}")
+    editors = [entry(n, EDITOR_URL_TEMPLATES[n]) for n in names]
+    if default in EDITOR_URL_TEMPLATES:
+        if default not in names:
+            editors.insert(0, entry(default, EDITOR_URL_TEMPLATES[default]))
+        return editors, default
+    if not any(p in default for p in EDITOR_PLACEHOLDERS):
+        fail(f"--editor must be one of {', '.join(EDITOR_URL_TEMPLATES)} or a URL template containing {{path}}, {{relpath}} or {{relpath_url}}")
+    editors.insert(0, entry("custom", default))
+    return editors, "custom"
 
 
 def serialize_for_script(data: dict) -> str:
@@ -968,12 +997,77 @@ def compute_snapshot_id(snapshot: dict, review: dict) -> str:
     return digest
 
 
+DIAGRAM_MAX_BYTES = 2_000_000
+DIAGRAM_BANNED = re.compile(r"<\s*(script|foreignObject)\b|\son[a-z]+\s*=|javascript:", re.IGNORECASE)
+
+
+def load_diagrams(review: dict, base_dir: Path, errors: list[str]) -> list[dict]:
+    """Read each diagram's SVG file (path relative to review.json) so the page can show it as an image."""
+    diagrams = review.get("diagrams", []) or []
+    if not isinstance(diagrams, list):
+        errors.append("diagrams must be a list")
+        return []
+    out: list[dict] = []
+    seen: set[str] = set()
+    for i, d in enumerate(diagrams):
+        where = f"diagrams[{i}]"
+        if not isinstance(d, dict):
+            errors.append(f"{where} must be an object")
+            continue
+        slug = d.get("slug")
+        if not isinstance(slug, str) or not SLUG_RE.match(slug) or slug in seen:
+            errors.append(f"{where} slug missing, malformed, or duplicate: {slug!r}")
+            continue
+        seen.add(slug)
+        if not isinstance(d.get("title"), str) or not d["title"].strip():
+            errors.append(f"{where} needs a title")
+            continue
+        svg_path = d.get("svg")
+        if not isinstance(svg_path, str) or not svg_path:
+            errors.append(f"{where} needs an svg file path")
+            continue
+        path = (base_dir / svg_path).resolve()
+        if not path.is_file():
+            errors.append(f"{where} svg file not found: {path}")
+            continue
+        raw = path.read_bytes()
+        if len(raw) > DIAGRAM_MAX_BYTES:
+            errors.append(f"{where} svg exceeds {DIAGRAM_MAX_BYTES} bytes")
+            continue
+        text = raw.decode("utf-8-sig")
+        if not re.search(r"<svg[\s>]", text):
+            errors.append(f"{where} file is not an SVG document: {path}")
+            continue
+        if DIAGRAM_BANNED.search(text):
+            errors.append(f"{where} svg carries script, event handlers, or foreignObject: {path}")
+            continue
+        out.append({"slug": slug, "title": d["title"], "summary": d.get("summary"), "notes": d.get("notes", []) or [], "svg": with_intrinsic_size(text)})
+    return out
+
+
+def with_intrinsic_size(text: str) -> str:
+    """An SVG shown through <img> needs absolute width and height; a relative one (width="100%", as mermaid emits) collapses to a thumbnail."""
+    root = re.search(r"<svg\b[^>]*>", text)
+    view_box = re.search(r'viewBox="\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)\s*"', root.group(0)) if root else None
+    if not root or not view_box:
+        return text
+    tag = root.group(0)
+    width = re.search(r'\swidth="([^"]*)"', tag)
+    if width and width.group(1).strip().replace(".", "", 1).isdigit():
+        return text
+    fixed = re.sub(r'\s(width|height)="[^"]*"', "", tag)
+    fixed = fixed.replace("<svg", f'<svg width="{view_box.group(1)}" height="{view_box.group(2)}"', 1)
+    fixed = re.sub(r'max-width:\s*[\d.]+px;?', "", fixed)
+    return text.replace(tag, fixed, 1)
+
+
 def cmd_build(args: argparse.Namespace) -> int:
     snapshot = load_json(args.snapshot)
     review = load_json(args.review)
     errors: list[str] = []
     warnings: list[str] = []
     validate_review(review, snapshot, errors, warnings)
+    diagrams = load_diagrams(review, Path(args.review).resolve().parent, errors)
     if errors:
         for e in errors:
             print("error: " + e, file=sys.stderr)
@@ -991,12 +1085,14 @@ def cmd_build(args: argparse.Namespace) -> int:
     for p in approved_files:
         if p not in snap_paths:
             fail(f"unknown file in --approved-files: {p}")
-    data = compose_page_data(review, snapshot, snapshot_id, approved, resolve_editor_url(args.editor), approved_files, args.exclude_approved)
+    editors, editor_default = resolve_editors(args.editor, args.editors, args.jetbrains_project or default_jetbrains_project(snapshot["header"]["repository"]))
+    data = compose_page_data(review, snapshot, snapshot_id, approved, editors, editor_default, approved_files, args.exclude_approved)
+    data["diagrams"] = diagrams
     template_path = args.template or str(Path(__file__).resolve().parent.parent / "assets" / "review-page.html")
     html = render_page(data, review, template_path)
     out_path = Path(args.out)
     out_path.write_text(html, encoding="utf-8", newline="\n")
-    print(json.dumps({"out": args.out, "absolute": str(out_path.resolve()), "snapshot_id": snapshot_id, "short_id": snapshot_id[:12], "group_order": [g["slug"] for g in data["groups"]], "data_flows": [fl["slug"] for fl in data["data_flows"]], "bytes": len(html.encode("utf-8")), "warnings": warnings}, ensure_ascii=False, indent=1))
+    print(json.dumps({"out": args.out, "absolute": str(out_path.resolve()), "snapshot_id": snapshot_id, "short_id": snapshot_id[:12], "group_order": [g["slug"] for g in data["groups"]], "data_flows": [fl["slug"] for fl in data["data_flows"]], "diagrams": [d["slug"] for d in data["diagrams"]], "bytes": len(html.encode("utf-8")), "warnings": warnings}, ensure_ascii=False, indent=1))
     return 0
 
 
@@ -1204,7 +1300,9 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--approved", help="comma-separated group slugs whose files are pre-checked from earlier valid partial approvals")
     b.add_argument("--approved-files", help="comma-separated file paths to pre-check from earlier valid partial approvals")
     b.add_argument("--exclude-approved", action="store_true", help="leave the diff of pre-approved files out of the screen; they still count as approved in the payload")
-    b.add_argument("--editor", default="vscode", help="open-in-editor links: vscode (default), vscode-insiders, cursor, none, or a URL template with {path} and {line}")
+    b.add_argument("--editor", default="vscode", help="editor selected until the reader picks another: vscode (default), vscode-insiders, cursor, rider, none, or a URL template with {path}, {relpath} or {relpath_url} and {line} or {line0}")
+    b.add_argument("--editors", default="vscode,rider", help="comma-separated editors the page offers in its editor selector (default: vscode,rider)")
+    b.add_argument("--jetbrains-project", help="project name for rider links (default: the single .sln/.slnx in the repository root, else the folder name)")
     b.add_argument("--out", required=True, help="output HTML path")
     b.set_defaults(func=cmd_build)
 
