@@ -25,6 +25,7 @@ Assignment rules:
 - Assign by the role the file plays in this change, not by its folder name alone. A shared helper edited so that a repository can filter rows belongs to `persistence` for this review.
 - Every changed file gets exactly one layer. When the role is unclear, choose `other` and explain in the group text; never omit a file.
 - Generated code follows the layer of its consumer. A generated API client is `client_data`; a generated migration is `persistence`.
+- A function or job that a queue message starts and that only forwards the message to a handler is `infrastructure` (background jobs), not `api`. The step that puts the message on the queue then reads before it, in the order the flow runs.
 - Tests are `tests` even when they sit next to production code. Documentation and images used by documentation are `docs`. Build, CI, and settings are `config`.
 - Use `order` on a file when call order inside one layer matters, for example page before component, or repository before the migration that supports it. Without `order`, files in the same layer sort by path.
 
@@ -37,7 +38,7 @@ The build script enforces these; author the review knowing they apply.
 - The file list inside a group follows the same order.
 - Lanes in the impact map follow layer rank from top to bottom.
 
-If the natural reading order of a change differs from this order, adjust the grouping rather than the order: split a group that mixes a screen change with a storage change into two groups, or merge two groups that only make sense together. The top-down order is the story.
+If the natural reading order of a change differs from this order, adjust the grouping rather than the order. The usual cause is one group that holds two flows: the layer sort then interleaves them (the second flow's trigger lands between the first flow's handler and its storage). Give each flow its own group, as `SKILL.md` describes; within one flow, `order` fixes the remaining ties. The top-down order is the story.
 
 ## Impact map
 
