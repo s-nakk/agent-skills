@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>__TITLE__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; each processing layer is a decision table (tests down, branch conditions across). */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --fg: #1c2330;
+  --muted: #5d6676;
+  --line: #d9dee6;
+  --head: #eef1f5;
+  --unit: #5b4fd1;
+  --stub: #12806a;
+  --mock: #c4561d;
+  --shared: #9aa3b1;
+  --gap: #c62f3c;
+  --gap-bg: #fdecee;
+  --new: #12806a;
+  --new-bg: #e3f4ef;
+  --ok: #1c6b3a;
+  --ok-bg: #e2f3e7;
+  --err: #a5222f;
+  --err-bg: #fbe5e7;
+  --font-body: "IBM Plex Sans JP", "Hiragino Sans", "Yu Gothic UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161d; --surface: #1a2029; --fg: #e3e8ef; --muted: #9aa5b5; --line: #2e3744; --head: #222a35;
+    --unit: #9d94f5; --stub: #4fc7a8; --mock: #f08a52; --shared: #6d7686; --gap: #ff7b86; --gap-bg: #3a1d22;
+    --new: #4fc7a8; --new-bg: #173a33; --ok: #7fd89a; --ok-bg: #18341f; --err: #ff9aa3; --err-bg: #3d1a1f; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161d; --surface: #1a2029; --fg: #e3e8ef; --muted: #9aa5b5; --line: #2e3744; --head: #222a35;
+  --unit: #9d94f5; --stub: #4fc7a8; --mock: #f08a52; --shared: #6d7686; --gap: #ff7b86; --gap-bg: #3a1d22;
+  --new: #4fc7a8; --new-bg: #173a33; --ok: #7fd89a; --ok-bg: #18341f; --err: #ff9aa3; --err-bg: #3d1a1f; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 14px; line-height: 1.6; }
+.wrap { max-width: 1280px; margin: 0 auto; padding-block: 28px 56px; padding-inline: 16px; display: grid; gap: 22px; }
+header { display: grid; gap: 8px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0; text-wrap: balance; }
+.meta { color: var(--muted); font-size: 13px; margin: 0; }
+.meta code { font-family: var(--font-mono); font-size: 12px; }
+.summary { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; }
+.summary span { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; }
+.u { background: var(--unit); } .i { background: var(--stub); } .k { background: var(--mock); } .s { background: var(--shared); }
+section { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 14px 10px; display: grid; gap: 8px; min-width: 0; }
+h2 { font-size: 15px; font-weight: 600; margin: 0; }
+/* Wide screens fit the table to the column so the header can stick to the viewport; narrow ones scroll inside the table */
+.scroll { overflow-x: visible; }
+table { border-collapse: collapse; width: 100%; font-size: 12px; }
+table.cases > thead { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; }
+table.cases > thead th { box-shadow: inset 0 -1px 0 var(--line); }
+th.val { writing-mode: vertical-rl; text-orientation: mixed; max-height: 11em; padding: 6px 2px; vertical-align: bottom; text-align: left; }
+@media (max-width: 899px) {
+  .scroll { overflow-x: auto; }
+  table.cases { min-width: 760px; }
+  table.cases > thead { position: static; }
+}
+th, td { border-bottom: 1px solid var(--line); padding: 6px 4px; text-align: center; vertical-align: middle; }
+thead th { background: var(--head); color: var(--muted); font-weight: 500; font-size: 11px; line-height: 1.35; }
+th.lbl, td.lbl { text-align: left; padding-left: 8px; width: 24%; }
+th.res, td.res { text-align: left; width: 9%; white-space: nowrap; }
+.st { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.st.ok { background: var(--ok-bg); color: var(--ok); }
+.st.err { background: var(--err-bg); color: var(--err); }
+th.exp, td.exp { text-align: left; width: 25%; font-size: 11px; font-family: var(--font-mono); word-break: break-word; }
+td.lbl .name { display: block; font-weight: 500; }
+.badge { display: inline-block; font-size: 10px; padding: 0 6px; border-radius: 999px; background: var(--new-bg); color: var(--new); margin-left: 6px; vertical-align: 1px; }
+.badge.planned { background: var(--head); color: var(--muted); }
+.badge.red { background: var(--err-bg); color: var(--err); }
+.badge.green { background: var(--ok-bg); color: var(--ok); }
+td.lbl .guard { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+td.lbl .no { font-family: var(--font-mono); font-weight: 600; color: var(--muted); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.placement { font-size: 12px; color: var(--muted); margin: 0; }
+.placement code { font-family: var(--font-mono); font-size: 11px; }
+tr.count td { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; border-bottom: 0; }
+td.none { color: var(--gap); background: var(--gap-bg); font-weight: 600; }
+th.none { color: var(--gap); }
+/* A thin rule between values and a strong one where the next factor starts */
+table.cases th.val, table.cases td.v { border-left: 1px solid var(--line); }
+table.cases th.factor, table.cases th.first, table.cases td.first { border-left: 2px solid var(--muted); }
+thead th.factor { color: var(--fg); font-weight: 600; }
+.combo { display: grid; gap: 6px; }
+.combo h3 { font-size: 13px; font-weight: 600; margin: 6px 0 0; }
+.combo table { min-width: 0; width: auto; }
+.combo th, .combo td { padding: 6px 10px; min-width: 72px; }
+.combo tbody th { text-align: left; background: var(--head); color: var(--muted); font-weight: 500; font-size: 11px; }
+.combo td.hit { font-variant-numeric: tabular-nums; font-weight: 600; }
+.combo td.excluded { color: var(--muted); background: var(--head); font-size: 11px; }
+.combo .reasons { margin: 0; padding-left: 1.2em; font-size: 12px; color: var(--muted); }
+.note { font-size: 12px; color: var(--muted); margin: 0; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+.terms dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; font-size: 13px; }
+.terms dt { font-weight: 600; }
+.terms dd { margin: 0; color: var(--fg); }
+@media (max-width: 560px) { .terms dl { grid-template-columns: 1fr; } .terms dd { margin-bottom: 6px; } }
+</style>
+<div class="wrap">
+  <header>
+    <h1 id="title"></h1>
+    <p class="meta" id="scope"></p>
+    <div class="summary" id="summary"></div>
+    <div class="legend" id="legend"></div>
+  </header>
+  <section class="terms" id="terms-section" hidden>
+    <h2>この表で使う言葉</h2>
+    <dl id="terms"></dl>
+  </section>
+  <div id="tables"></div>
+</div>
+<script type="application/json" id="matrix-data">__DATA_JSON__</script>
+<script>
+(() => {
+  const data = JSON.parse(document.getElementById("matrix-data").textContent);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const kindLabels = Object.assign({
+    u: "単体テスト(クラスを 1 つだけ動かす)",
+    i: "結合テスト(外部システムの応答はテストで用意した値)",
+    k: "結合テスト(外部システムのモックや実物を実際に呼ぶ)",
+    s: "この PR の外のテストが確かめる(同じ部品を使うため)"
+  }, data.kind_labels || {});
+
+  document.getElementById("title").textContent = data.title;
+  const isPlan = data.mode === "plan";
+  document.getElementById("scope").textContent = data.scope + (isPlan
+    ? " 実装の前に合意するテストケースの計画です。表は処理の段階ごとに分かれ、横に「結果を変える因子とその値」、縦に「予定のテストケース」を並べています。各ケースは自分が固定した値に印を付けます。印の無い値と、組み合わせ表の空いたマスは、確かめるケースが計画にありません。"
+    : " 表は処理の段階ごとに分かれています。各表は、横に「結果を変える因子とその値」、縦に「テスト」を並べ、各テストは自分が固定した値に印を付けます。印の無い値と、組み合わせ表の空いたマスは、テストで確かめていません。");
+  const statusLabels = { planned: "計画", red: "Red", green: "Green" };
+  const statusCounts = { planned: 0, red: 0, green: 0 };
+
+  const used = new Set(data.sections.flatMap(s => s.rows.map(r => r.kind)));
+  document.getElementById("legend").innerHTML =
+    ["u", "i", "k", "s"].filter(k => used.has(k)).map(k => `<span><i class="dot ${k}"></i>${esc(kindLabels[k])}</span>`).join("") +
+    '<span><span class="st ok">緑</span>正常に終わる</span><span><span class="st err">赤</span>エラーで終わる</span>';
+
+  if (data.terms && data.terms.length) {
+    document.getElementById("terms-section").hidden = false;
+    document.getElementById("terms").innerHTML = data.terms.map(t => `<dt>${esc(t.term)}</dt><dd>${esc(t.definition)}</dd>`).join("");
+  }
+
+  const totals = { u: 0, i: 0, k: 0 };
+  let valueGaps = 0;
+  let comboGaps = 0;
+  const valuesOf = (r, f) => { const v = r.covers[f]; return v === undefined ? [] : Array.isArray(v) ? v : [v]; };
+  const host = document.getElementById("tables");
+  host.style.display = "grid";
+  host.style.gap = "16px";
+  // Number every row across the whole page so a reader can point at a case ("#13")
+  let caseNo = 0;
+  for (const s of data.sections) {
+    const cols = s.factors.flatMap(f => f.values.map((v, j) => ({ f: f.name, v, first: j === 0 })));
+    const counts = cols.map(() => 0);
+    let body = "";
+    for (const r of s.rows) {
+      if (r.kind in totals) totals[r.kind] += r.cases;
+      const cls = r.outcome === "ok" ? "ok" : "err";
+      const badge = r.added ? '<span class="badge">追加</span>' : r.changed ? '<span class="badge">変更</span>' : "";
+      const status = r.status ? `<span class="badge ${r.status}">${statusLabels[r.status]}</span>` : "";
+      if (r.status) statusCounts[r.status] += r.cases;
+      const guard = r.guard ? `<span class="guard">観点: ${esc(r.guard)}</span>` : "";
+      caseNo++;
+      body += `<tr id="case-${caseNo}"><td class="lbl"><span class="name"><span class="no">#${caseNo}</span>${esc(r.action)}${badge}${status}</span>${guard}</td>` +
+        `<td class="res"><span class="st ${cls}">${esc(r.result)}</span></td><td class="exp">${esc(r.detail)}</td>`;
+      cols.forEach((c, j) => {
+        const on = valuesOf(r, c.f).includes(c.v);
+        if (on) counts[j]++;
+        body += `<td class="${c.first ? "v first" : "v"}">${on ?`<i class="dot ${r.kind}" aria-label="テストあり"></i>` : ""}</td>`;
+      });
+      body += "</tr>";
+    }
+    const factorHead = s.factors.map(f => `<th class="factor" colspan="${f.values.length}">${esc(f.name)}</th>`).join("");
+    const valueHead = cols.map((c, j) => `<th class="${["val", counts[j] ? "" : "none", c.first ? "first" : ""].join(" ").trim()}">${esc(c.v)}</th>`).join("");
+    const foot = counts.map((n, j) => `<td class="${["v", n ? "" : "none", cols[j].first ? "first" : ""].join(" ").replace(/\s+/g, " ").trim()}">${n || "なし"}</td>`).join("");
+    valueGaps += counts.filter(n => !n).length;
+
+    let combos = "";
+    for (const c of s.combinations || []) {
+      const [fa, fb] = c.factors;
+      const va = s.factors.find(f => f.name === fa).values;
+      const vb = s.factors.find(f => f.name === fb).values;
+      const excluded = new Map((c.excluded || []).map(e => [e.values.join("\u0000"), e.reason]));
+      const reasons = [];
+      let rowsHtml = "";
+      for (const a of va) {
+        rowsHtml += `<tr><th>${esc(a)}</th>`;
+        for (const b of vb) {
+          const reason = excluded.get(a + "\u0000" + b);
+          const n = s.rows.filter(r => valuesOf(r, fa).includes(a) && valuesOf(r, fb).includes(b)).length;
+          if (n) {
+            rowsHtml += `<td class="hit">${n}</td>`;
+          } else if (reason !== undefined) {
+            reasons.push(reason);
+            rowsHtml += `<td class="excluded" title="${esc(reason)}">対象外 ${reasons.length}</td>`;
+          } else {
+            comboGaps++;
+            rowsHtml += '<td class="none">なし</td>';
+          }
+        }
+        rowsHtml += "</tr>";
+      }
+      combos += `<div class="combo"><h3>組み合わせ: ${esc(fa)}(縦) × ${esc(fb)}(横)</h3><div class="scroll"><table>` +
+        `<thead><tr><th></th>${vb.map(b => `<th>${esc(b)}</th>`).join("")}</tr></thead><tbody>${rowsHtml}</tbody></table></div>` +
+        (reasons.length ? `<ol class="reasons">${reasons.map(t => `<li>対象外: ${esc(t)}</li>`).join("")}</ol>` : "") + "</div>";
+    }
+
+    host.insertAdjacentHTML("beforeend",
+      `<section><h2>${esc(s.title)}</h2>${s.placement ? `<p class="placement">配置先: <code>${esc(s.placement)}</code></p>` : ""}<div class="scroll"><table class="cases"><thead>` +
+      `<tr><th class="lbl" rowspan="2">${isPlan ? "前提と操作" : "テストでしていること"}</th><th class="res" rowspan="2">${isPlan ? "期待する結果" : "結果"}</th><th class="exp" rowspan="2" style="font-family: var(--font-body)">code「メッセージ」・数</th>${factorHead}</tr>` +
+      `<tr>${valueHead}</tr></thead>` +
+      `<tbody>${body}<tr class="count"><td class="lbl">${isPlan ? "この値を固定するケースの数" : "この値を固定するテストの数"}</td><td></td><td></td>${foot}</tr></tbody></table></div>` +
+      combos + `${s.note ? `<p class="note">${esc(s.note)}</p>` : ""}</section>`);
+  }
+  const sum = totals.u + totals.i + totals.k;
+  const parts = [`<span>合計 <strong>${sum}</strong> ケース</span>`];
+  const shortLabels = { u: "単体", i: "結合(応答を用意)", k: "結合(実際に呼ぶ)" };
+  for (const k of ["u", "i", "k"]) if (totals[k]) parts.push(`<span><i class="dot ${k}"></i>${shortLabels[k]} ${totals[k]}</span>`);
+  if (statusCounts.planned + statusCounts.red + statusCounts.green) {
+    parts.push(`<span>${["planned", "red", "green"].map(k => `<span class="badge ${k}" style="margin-left: 0">${statusLabels[k]} ${statusCounts[k]}</span>`).join(" ")}</span>`);
+  }
+  if (data.acceptance_criteria) parts.push(`<span>受け入れ条件 ${data.acceptance_criteria.covered}/${data.acceptance_criteria.total} 件を${isPlan ? "ケースが覆っている" : "テストが確かめている"}</span>`);
+  const noun = isPlan ? "ケース" : "テスト";
+  parts.push(valueGaps ? `<span style="color: var(--gap)">${noun}の無い値 ${valueGaps}</span>` : `<span>${noun}の無い値はない</span>`);
+  if (data.sections.some(s => (s.combinations || []).length)) {
+    parts.push(comboGaps ? `<span style="color: var(--gap)">${noun}の無い組み合わせ ${comboGaps}</span>` : `<span>${noun}の無い組み合わせはない</span>`);
+  }
+  document.getElementById("summary").innerHTML = parts.join("");
+})();
+</script>

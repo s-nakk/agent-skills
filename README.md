@@ -11,10 +11,14 @@ Claude Code と Codex の両方で使う、開発フロー用の自作 Skill 集
 | [`independent-final-review`](skills/independent-final-review/SKILL.md) | 実装者から独立した reviewer セッションで、PR や commit 差分を read-only のリスク重み付き敵対的検証にかける。再レビューは同じ reviewer を再開する | Codex: `assets/independent-review.config.toml` の profile。Claude Code: subagent |
 | [`github-issue-flow`](skills/github-issue-flow/SKILL.md) | GitHub Issue を起点に、既存 Issue を変更せず worktree 分離・SDD/TDD・検証・draft PR・独立レビューまで進める定型フロー | `gh` |
 | [`thermo-nuclear-code-quality-review`](skills/thermo-nuclear-code-quality-review/SKILL.md) | 抽象化の質、巨大ファイル化、条件分岐の増殖を極めて厳しく審査する保守性レビュー | なし |
+| [`test-case-matrix`](skills/test-case-matrix/SKILL.md) | テストケースを、処理の段階ごとの決定表（縦にケース、横に結果を変える因子とその値、必要なら 2 因子の組み合わせ表）にまとめた HTML を作る。実装の前にケースを策定して独立 reviewer に過不足を確かめさせ、ユーザーと合意してから TDD で進める場面と、PR のテストの網羅性を確かめる場面で使う | Python 3（`scripts/build_matrix.py`） |
+| [`finish-change`](skills/finish-change/SKILL.md) | 実装が終わった変更を、人が差分を読まなくても判断できる状態まで仕上げる。検証（実物を動かす）、独立レビュー、指摘の裏取りと仕分け、修正、証拠つきの報告を 1 本で進め、どのレビューをいつ何回回すかを固定する | `independent-final-review`。条件付きで `thermo-nuclear-code-quality-review`、`explained-diff-review` |
 | [`compact-prep`](skills/compact-prep/SKILL.md) | コンテキスト圧縮の前に、採用・却下した判断と次の一手を状態ファイルへ退避する。**Claude Code 専用** | `assets/compact-state-hook.py` を hook 登録（`references/setup.md`） |
 | [`explained-diff-review`](skills/explained-diff-review/SKILL.md) | 実装完了後に、変更を画面 → API → アプリケーション → 永続化の順に並べた説明付きレビュー画面を単独 HTML として生成する（左にマップとグループ一覧、右に説明と差分の 2 ペイン。送信はメッセージのコピー & 貼り付け）。影響範囲マップ、2 列差分、ファイル単位の承認とコメント、差分の行に差し込む行コメント、スナップショット ID による承認の同一性検証を含む。差分にはファイルごとの見出し（概要と「エディタで開く」リンク、`--editor` で URL スキームを選択）と、hunk の該当行の直下に差し込む解説（`hunk_notes`、行アンカー対応）を置ける。対になる削除行と追加行では実際に変わったトークンだけを行内で強調する。承認の単位はファイルで、各ファイルのチェックとグループ単位の一括チェックがあり、payload は `approved_files` を運ぶ。CRUD が絡む変更では「データの流れ」タブに、操作ごとにテーブル → エンティティ → 取得モデル / コマンド → API → 生成クライアント型 → 画面の型 → 画面の各段をフィールド一覧で並べ、段の間をフィールド単位の線（そのまま / 改名 / 型変換 / 計算）で結び、生まれる・止まるフィールドに印を付ける（`data_flows`）。画面の言語は生成時に `locale` で日本語 / 英語を選ぶ | Python 3、`git`。生成した HTML をブラウザで開く（localhost 配信可） |
 
 初回は `setup-development-policy` でプロジェクトの運用を選択する。Issue なし・ローカル完了も選べるため、以下のフローは全プロジェクトへの必須条件ではない。
+
+実装の前後をつなぐ組み合わせ: 仕様が固まったら `test-case-matrix` でテストケースを合意 → 実装 → `finish-change` で検証とレビューを通して報告。`finish-change` が、下の `independent-final-review` などを決まった順と回数で使う。
 
 Issue を採用した場合の組み合わせ: `github-issue-flow` で Issue を確定 → 実装 → draft PR → `independent-final-review`。設計・承認の条件は各 repository の規約に従う。`thermo-nuclear-code-quality-review` は保守性を別軸で見たい時に追加で使う。`explained-diff-review` は実装と独立レビューが終わった変更をユーザーがブラウザで確認・承認する時に使う。
 
