@@ -7,16 +7,18 @@
 初回。PR 番号とスキル名だけを渡す。
 
 ```bash
-codex exec -p independent-review \
+~/.agents/skills/independent-final-review/assets/run-codex-review.sh \
   'Use $independent-final-review to review PR #1234 of this repository. Do not read memory or prior sessions.'
 ```
 
-出力に含まれる session ID を控える。差分再レビューでは `-p` を `resume` より前に置く。
+モデルや reasoning effort を指定する場合は prompt の前に置く（例: `-m <model> -c model_reasoning_effort=high`）。出力に含まれる session ID を控える。差分再レビューは同じラッパーに `resume` を渡す。ラッパーが `-p` を `resume` より前に置く。**`resume` は初回の `-m` / `-c` を引き継がず、`config.toml` の既定値で再開する**ので、初回と同じ `-m` と `-c model_reasoning_effort=...` を `resume` の前に毎回付け、出力ヘッダーの `model:` と `reasoning effort:` で確かめる。
 
 ```bash
-codex exec -p independent-review resume <reviewer-session-id> \
+~/.agents/skills/independent-final-review/assets/run-codex-review.sh -m <model> -c model_reasoning_effort=high resume <reviewer-session-id> \
   'Re-review PR #1234 with $independent-final-review. Previously reviewed head: a1b2c3d. Review only the diff from that head to the current head.'
 ```
+
+prompt では PR を URL ではなく番号で渡す。worktree 分離のガードを持つ repository では、コマンド行の GitHub URL や `$skill` 参照を含む引数が検証できないとして起動が止まることがある。止まった場合は、起動行をスクラッチの shell スクリプトに書き、`bash <script> > <log>` で実行する。レビューは長時間かかるので、出力をファイルへリダイレクトしてバックグラウンドで実行する。
 
 ## 親セッションが Claude Code で reviewer を起動する
 

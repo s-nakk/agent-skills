@@ -15,12 +15,16 @@ description: 実装、refactor、文書・設定・infra 変更の最終差分�
 
 ### Codex
 
-- 初回は `codex exec -p independent-review` で起動し、reviewer session ID を保持する。`--ephemeral` は session の再開を不能にするため付けない
-- 2 回目以降は `codex exec -p independent-review resume <reviewer-session-id>` で同じ reviewer セッションを再開する。`resume` は `-p/--profile` を受け付けないため、`-p` は `resume` より前に置く。語順を誤ると profile が読まれず、base config の権限で再開されて read-only 強制が失われる
+- 親セッションは `codex exec` を直接打たず、同梱の `assets/run-codex-review.sh` で起動・再開する。ラッパーは `codex exec -p independent-review` を実行し、呼び出し元の `gh auth token` を `GH_TOKEN` 環境変数でだけ渡す
+  - 理由: Windows の elevated sandbox（`[windows] sandbox = "elevated"`）はコマンドを専用のローカルユーザーで実行するため、呼び出し元の資格情報マネージャーに保存された gh の token を読めず、reviewer 内の `gh` が HTTP 401 になる
+  - token を profile、config、`shell_environment_policy.set` に書かない。Codex は既定で `*TOKEN*` 名の環境変数を除外しない（`shell_environment_policy.ignore_default_excludes` の既定は true）ので、`GH_TOKEN` を落とす `exclude` / `include_only` / `ignore_default_excludes = false` を設定しない
+- 初回は `run-codex-review.sh '<prompt>'` で起動し、reviewer session ID を保持する。`--ephemeral` は session の再開を不能にするため付けない
+- 2 回目以降は `run-codex-review.sh resume <reviewer-session-id> '<prompt>'` で同じ reviewer セッションを再開する。ラッパーは `-p` を必ず `resume` より前に置く。`resume` は初回の `-m` / `-c`(reasoning effort など)を引き継がないため、初回と同じ値を `resume` の前に毎回渡し、出力ヘッダーで確かめる。`resume` は `-p/--profile` を受け付けず、語順を誤ると profile が読まれず、base config の権限で再開されて read-only 強制が失われる
 - `-p <name>` は `$CODEX_HOME/<name>.config.toml` に対応する。`independent-review` profile は `:read-only` を継承し、filesystem write を許可せず GitHub network だけを許可する専用プロファイルとする。雛形は `assets/independent-review.config.toml`
 - `-s read-only` または `sandbox_mode` override を併用してはならない
 - turn 開始時に profile が適用されていること（managed permission profile、read-only sandbox）を確認する。適用されていない場合は、その turn をレビューに使わず、`-p independent-review` を `resume` より前に置いて再開し直すよう返す
 - profile または reviewer session の再開が利用不能な場合は、reviewer セッション内で設定調査や権限変更を行わず、起動失敗として親セッションへ返す。別の reviewer セッションで代替しない
+- reviewer 内の `gh` が認証エラー（HTTP 401、`gh auth status` の token invalid）になった場合も、REST・connector・ブラウザへの迂回でレビューを続けず、起動失敗として返す。原因候補として「`run-codex-review.sh` を使わずに起動され `GH_TOKEN` が渡っていない」を添える
 
 ### Claude Code
 
@@ -196,4 +200,5 @@ file:line
 ## 参考
 
 - `assets/independent-review.config.toml`: Codex 用 read-only profile の雛形。`$CODEX_HOME/independent-review.config.toml` へ置く
+- `assets/run-codex-review.sh`: Codex reviewer の起動・再開ラッパー。profile の語順と `GH_TOKEN` の受け渡しを固定する
 - `references/examples.md`: 実プロジェクトで親セッションが reviewer を起動した際の指示文と、レビューサイクルの流れの例
