@@ -34,11 +34,11 @@ Assignment rules:
 The build script enforces these; author the review knowing they apply.
 
 - Groups are ordered by the smallest layer rank among their hunks. Ties keep the authored order.
-- Hunks inside a group are ordered by layer rank, then `order`, then path, then hunk position.
-- The file list inside a group follows the same order.
+- Files inside a group follow the group's `reading_order` (call order: each callee right after its caller) when it is given. Files it leaves out, and all files of a group without it, are ordered by layer rank, then `order`, then path.
+- Hunks of one file keep their position in the file. The file list inside a group follows the same order.
 - Lanes in the impact map follow layer rank from top to bottom.
 
-If the natural reading order of a change differs from this order, adjust the grouping rather than the order. The usual cause is one group that holds two flows: the layer sort then interleaves them (the second flow's trigger lands between the first flow's handler and its storage). Give each flow its own group, as `SKILL.md` describes; within one flow, `order` fixes the remaining ties. The top-down order is the story.
+Layer order alone puts a callee in a lower layer after every other file of its caller's layer, so a reader who meets a call has to scroll down past unrelated files to find the method and back up to continue. Inside a group, give `reading_order` so the story follows the calls. Between groups, if the natural reading order differs from the layer order, adjust the grouping rather than the order. The usual cause is one group that holds two flows: the layer sort then interleaves them (the second flow's trigger lands between the first flow's handler and its storage). Give each flow its own group, as `SKILL.md` describes.
 
 ## Impact map
 

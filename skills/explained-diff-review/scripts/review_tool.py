@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import fnmatch
 import json
 import os
 import re
@@ -63,6 +64,22 @@ LAYERS = [
     ("other", 100, "その他", "Other"),
 ]
 LAYER_INDEX = {key: (rank, ja, en) for key, rank, ja, en in LAYERS}
+
+# Documentation and test files are left out of the review page unless snapshot --include-docs-and-tests is given.
+# They still feed the manifest, so a change to one of them after the snapshot makes an approval stale.
+DOC_DIRS = {"doc", "docs", "documentation"}
+DOC_SUFFIXES = {".md", ".mdx", ".markdown", ".rst", ".adoc", ".mmd"}
+TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "e2e", "testdata"}
+# A directory named like a .NET test project: Foo.Tests, Foo.UnitTests, Foo.IntegrationTests.
+TEST_PROJECT_RE = re.compile(r"\.[A-Za-z0-9]*Tests?$")
+# Test file names by language convention. "Spec.cs" is not one: Ardalis specifications use that suffix in production code.
+TEST_FILE_RE = re.compile(
+    r"^test_.+\.py$|_test\.(?:py|go|rb|exs?)$|^conftest\.py$"
+    r"|\.(?:test|spec)\.[cm]?[jt]sx?$"
+    r"|Tests?\.(?:cs|fs|vb|java|kt|scala|swift)$")
+# Generated files are long and carry nothing to review: EF migration designers and model snapshots, source-generator
+# output. They are left out unless snapshot --include-generated is given; --leave-out adds project-specific globs.
+GENERATED_FILE_RE = re.compile(r"\.Designer\.cs$|ModelSnapshot\.cs$|\.g\.(?:i\.)?cs$|\.generated\.[A-Za-z0-9]+$")
 
 
 class ToolError(Exception):
@@ -360,6 +377,21 @@ def extract_display_diff(repo: str, base_oid: str, context: int, function_contex
     return parse_unified_diff(raw.decode("utf-8", "replace"))
 
 
+def left_out_kind(path: str, include_docs_and_tests: bool = False, include_generated: bool = False, leave_out: list[str] | None = None) -> str | None:
+    """'docs', 'tests' or 'generated' when the repository-relative path is left out of the page, else None."""
+    parts = path.split("/")
+    dirs, name = parts[:-1], parts[-1]
+    if not include_docs_and_tests:
+        if any(d.lower() in DOC_DIRS for d in dirs) or Path(name).suffix.lower() in DOC_SUFFIXES:
+            return "docs"
+        if any(d.lower() in TEST_DIRS or TEST_PROJECT_RE.search(d) for d in dirs) or TEST_FILE_RE.search(name):
+            return "tests"
+    if not include_generated:
+        if GENERATED_FILE_RE.search(name) or any(fnmatch.fnmatch(path, g) for g in leave_out or []):
+            return "generated"
+    return None
+
+
 def count_changes(files: list[dict]) -> dict:
     additions = deletions = hunks = 0
     for f in files:
@@ -388,19 +420,32 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
         if rel in tracked_paths:
             fail(f"path is tracked, not untracked: {rel}")
         files.append(untracked_file_record(repo, rel))
+    left_out: list[dict] = []
+    leave_out = list(getattr(args, "leave_out", None) or [])
+    kept = []
+    for f in files:
+        kind = left_out_kind(f["path"], bool(args.include_docs_and_tests), bool(getattr(args, "include_generated", False)), leave_out)
+        if kind:
+            left_out.append({"path": f["path"], "kind": kind})
+        else:
+            kept.append(f)
+    files = kept
     files.sort(key=lambda f: f["path"])
+    left_out.sort(key=lambda e: e["path"])
     header["working_tree"] = working_tree_summary(repo, untracked)
     header["counts"] = count_changes(files)
+    header["left_out_counts"] = {kind: sum(1 for e in left_out if e["kind"] == kind) for kind in ("docs", "tests", "generated")}
     header["generated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
     snapshot = {
         "schema_version": SCHEMA_VERSION,
-        "params": {"repo": repo, "base": args.base, "untracked": untracked, "context": args.context, "function_context": bool(args.function_context)},
+        "params": {"repo": repo, "base": args.base, "untracked": untracked, "context": args.context, "function_context": bool(args.function_context), "include_docs_and_tests": bool(args.include_docs_and_tests), "include_generated": bool(getattr(args, "include_generated", False)), "leave_out": leave_out},
         "core_digest": core_digest,
         "header": header,
         "files": files,
+        "left_out": left_out,
     }
     Path(args.out).write_text(json.dumps(snapshot, ensure_ascii=False, indent=1), encoding="utf-8")
-    summary = {"out": args.out, "repository": repo, "base": header["base_oid"][:10], "head": header["head_oid"][:10], "working_tree": header["working_tree"], "counts": header["counts"], "hunk_ids": [hk["id"] for f in files for hk in f["hunks"]]}
+    summary = {"out": args.out, "repository": repo, "base": header["base_oid"][:10], "head": header["head_oid"][:10], "working_tree": header["working_tree"], "counts": header["counts"], "left_out_counts": header["left_out_counts"], "hunk_ids": [hk["id"] for f in files for hk in f["hunks"]]}
     print(json.dumps(summary, ensure_ascii=False, indent=1))
     return 0
 
@@ -445,17 +490,23 @@ def validate_texts(review: dict, errors: list[str]) -> None:
     for i, b in enumerate(review.get("blockers", []) or []):
         check_text(b.get("title"), f"blockers[{i}].title", errors, allow_list=False)
         check_text(b.get("detail"), f"blockers[{i}].detail", errors, allow_list=False)
-    m = review.get("map") or {}
-    for n in m.get("nodes", []) or []:
-        check_text(n.get("label"), f"map.nodes[{n.get('id')}].label", errors, allow_list=False)
-        check_text(n.get("note"), f"map.nodes[{n.get('id')}].note", errors, allow_list=False)
-    for i, e in enumerate(m.get("edges", []) or []):
-        check_text(e.get("kind"), f"map.edges[{i}].kind", errors, allow_list=False)
-        check_text(e.get("label"), f"map.edges[{i}].label", errors, allow_list=False)
+    maps = [("map", review.get("map") or {})]
+    for en in review.get("entries", []) or []:
+        if isinstance(en, dict):
+            check_text(en.get("title"), f"entries[{en.get('slug')}].title", errors, allow_list=False)
+            check_text(en.get("trigger"), f"entries[{en.get('slug')}].trigger", errors, allow_list=False)
+            maps.append((f"entries[{en.get('slug')}].map", en.get("map") or {}))
+    for where, m in maps:
+        for n in m.get("nodes", []) or []:
+            check_text(n.get("label"), f"{where}.nodes[{n.get('id')}].label", errors, allow_list=False)
+            check_text(n.get("note"), f"{where}.nodes[{n.get('id')}].note", errors, allow_list=False)
+        for i, e in enumerate(m.get("edges", []) or []):
+            check_text(e.get("kind"), f"{where}.edges[{i}].kind", errors, allow_list=False)
+            check_text(e.get("label"), f"{where}.edges[{i}].label", errors, allow_list=False)
     for g in review.get("groups", []) or []:
         slug = g.get("slug")
-        for key in ("title", "outcome", "why", "contract", "before", "after", "scope", "risk", "impact"):
-            check_text(g.get(key), f"groups[{slug}].{key}", errors, allow_list=key != "title")
+        for key in ("title", "trigger", "outcome", "why", "contract", "before", "after", "scope", "risk", "impact"):
+            check_text(g.get(key), f"groups[{slug}].{key}", errors, allow_list=key not in ("title", "trigger"))
         for i, ev in enumerate(g.get("evidence", []) or []):
             check_text(ev.get("name"), f"groups[{slug}].evidence[{i}].name", errors, allow_list=False)
             check_text(ev.get("detail"), f"groups[{slug}].evidence[{i}].detail", errors, allow_list=False)
@@ -620,6 +671,104 @@ def validate_data_flows(review: dict, snapshot: dict, group_slugs: set[str], err
                 errors.append(f"{mw} must join a field to a field of the next stage ({m['from']} -> {m['to']})")
 
 
+def validate_map(m: dict, label: str, snapshot: dict, seen: set[str], errors: list[str], warnings: list[str]) -> None:
+    nodes = m.get("nodes", []) or []
+    edges = m.get("edges", []) or []
+    node_ids: set[str] = set()
+    for n in nodes:
+        nid = n.get("id")
+        if not nid or nid in node_ids:
+            errors.append(f"{label} node id missing or duplicate: {nid!r}")
+        node_ids.add(nid)
+        if not n.get("label"):
+            errors.append(f"{label} node {nid} needs a label")
+        if n.get("layer") not in LAYER_INDEX:
+            errors.append(f"{label} node {nid} has unknown layer: {n.get('layer')}")
+        if n.get("status", "unchanged") not in NODE_STATUSES:
+            errors.append(f"{label} node {nid} has invalid status: {n.get('status')}")
+        if n.get("group") and n["group"] not in seen:
+            errors.append(f"{label} node {nid} refers to unknown group: {n.get('group')}")
+        note = n.get("note")
+        if isinstance(note, str) and len(note) > 40:
+            warnings.append(f"{label} node {nid} note is long; keep notes to a few words")
+    for e in edges:
+        if e.get("from") not in node_ids or e.get("to") not in node_ids:
+            errors.append(f"{label} edge refers to unknown node: {e.get('from')} -> {e.get('to')}")
+    repo_root = Path(snapshot["params"]["repo"])
+    rank_of: dict[str, int] = {}
+    for n in nodes:
+        if n.get("layer") in LAYER_INDEX:
+            rank_of[n.get("id")] = LAYER_INDEX[n["layer"]][0]
+        ex = n.get("excerpt")
+        if ex is None:
+            continue
+        if not isinstance(ex, dict) or not isinstance(ex.get("path"), str) or not isinstance(ex.get("start"), int) or not isinstance(ex.get("end"), int) or ex["start"] < 1 or ex["end"] < ex["start"]:
+            errors.append(f"{label} node {n.get('id')} excerpt must be {{path, start, end}} with 1 <= start <= end")
+            continue
+        if not (repo_root / ex["path"]).is_file():
+            errors.append(f"{label} node {n.get('id')} excerpt file not found in the working tree: {ex['path']}")
+        elif ex["end"] - ex["start"] + 1 > EXCERPT_MAX_LINES:
+            warnings.append(f"{label} node {n.get('id')} excerpt spans {ex['end'] - ex['start'] + 1} lines; keep excerpts within {EXCERPT_MAX_LINES}")
+    touched = {e.get("from") for e in edges} | {e.get("to") for e in edges}
+    for n in nodes:
+        if n.get("status", "unchanged") != "unchanged" and n.get("id") not in touched:
+            warnings.append(f"{label} node {n.get('id')} is changed but has no edge; connect it to its caller or callee so the path stays continuous")
+    for e in edges:
+        a, b = rank_of.get(e.get("from")), rank_of.get(e.get("to"))
+        if a is None or b is None or a >= NON_CODE_RANK or b >= NON_CODE_RANK:
+            continue
+        if b - a > LAYER_SKIP_WARN:
+            warnings.append(f"{label} edge {e.get('from')} -> {e.get('to')} skips intermediate layers; add the pass-through nodes with an excerpt, or confirm the direct call")
+    if len(nodes) > MAP_NODE_BUDGET:
+        warnings.append(f"{label} has {len(nodes)} nodes; keep the main path within {MAP_NODE_BUDGET} and summarize the rest")
+    if len(edges) > MAP_EDGE_BUDGET:
+        warnings.append(f"{label} has {len(edges)} edges; keep within {MAP_EDGE_BUDGET}")
+    if nodes and not any(n.get("group") for n in nodes):
+        warnings.append(f"no {label} node links to a group; changed nodes should carry the slug of the group that explains them")
+
+
+def validate_entries(review: dict, snapshot: dict, seen: set[str], errors: list[str], warnings: list[str]) -> None:
+    """Entries split the diff tab by entry point (a job, an API): each has its own impact map and lists the groups it runs through."""
+    entries = review.get("entries")
+    if entries is None:
+        if not review.get("map"):
+            warnings.append("no impact map: add map, or entries with one map per entry point")
+        return
+    if not isinstance(entries, list) or not entries:
+        errors.append("entries must be a non-empty list when present")
+        return
+    slugs: set[str] = set()
+    covered: set[str] = set()
+    for en in entries:
+        if not isinstance(en, dict):
+            errors.append("each entry must be an object")
+            continue
+        slug = en.get("slug")
+        if not isinstance(slug, str) or not SLUG_RE.match(slug) or slug in slugs:
+            errors.append(f"entry slug invalid or duplicate: {slug!r}")
+        slugs.add(slug)
+        if not en.get("title"):
+            errors.append(f"entry {slug} needs a title")
+        gs = en.get("groups")
+        if not isinstance(gs, list) or not gs:
+            errors.append(f"entry {slug} must list its groups")
+            gs = []
+        for g in gs:
+            if g not in seen:
+                errors.append(f"entry {slug} refers to unknown group: {g}")
+            covered.add(g)
+        m = en.get("map") or {}
+        if not (m.get("nodes") or []):
+            errors.append(f"entry {slug} needs a map with nodes")
+            continue
+        validate_map(m, f"entry {slug} map", snapshot, seen, errors, warnings)
+        for n in m.get("nodes", []) or []:
+            if n.get("group") and n["group"] in seen and n["group"] not in gs:
+                warnings.append(f"entry {slug} map node {n.get('id')} links to group {n['group']}, which the entry does not list")
+    for g in sorted(seen - covered):
+        warnings.append(f"group {g} is in no entry; a reader who picks an entry never sees it")
+
+
 def validate_review(review: dict, snapshot: dict, errors: list[str], warnings: list[str]) -> None:
     validate_texts(review, errors)
     locale = review.get("locale", "ja")
@@ -679,6 +828,26 @@ def validate_review(review: dict, snapshot: dict, errors: list[str], warnings: l
                 assigned[hid] = slug
     for hid in sorted(hunk_ids - set(assigned)):
         errors.append(f"hunk is not assigned to any group: {hid}")
+    path_of_hunk = {hk["id"]: f["path"] for f in snapshot["files"] for hk in f["hunks"]}
+    for g in groups:
+        slug = g.get("slug")
+        group_paths = {path_of_hunk[hid] for hid in g.get("hunks", []) or [] if hid in path_of_hunk}
+        order = g.get("reading_order")
+        if order is None:
+            if len(group_paths) > 2:
+                warnings.append(f"group {slug} spans {len(group_paths)} files and has no reading_order; list its files in call order so each callee follows its caller")
+            continue
+        if not isinstance(order, list) or not all(isinstance(p, str) for p in order):
+            errors.append(f"group {slug} reading_order must be a list of file paths")
+            continue
+        for p in order:
+            if p not in group_paths:
+                errors.append(f"group {slug} reading_order names a file with no hunk in the group: {p}")
+        if len(set(order)) != len(order):
+            errors.append(f"group {slug} reading_order lists a file twice")
+        missing_paths = sorted(group_paths - set(order))
+        if missing_paths:
+            warnings.append(f"group {slug} reading_order leaves out {len(missing_paths)} file(s); they follow the listed files in layer order: {', '.join(missing_paths)}")
     for g in groups:
         slug = g.get("slug")
         notes = g.get("hunk_notes")
@@ -702,60 +871,9 @@ def validate_review(review: dict, snapshot: dict, errors: list[str], warnings: l
                 col = 1 if side == "old" else 2
                 if not any(r[col] == line for r in hunk_rows[hid]):
                     errors.append(f"group {slug} hunk_notes[{hid}][{k}]: {side} line {line} is not shown in that hunk")
-    m = review.get("map") or {}
-    nodes = m.get("nodes", []) or []
-    edges = m.get("edges", []) or []
-    node_ids: set[str] = set()
-    for n in nodes:
-        nid = n.get("id")
-        if not nid or nid in node_ids:
-            errors.append(f"map node id missing or duplicate: {nid!r}")
-        node_ids.add(nid)
-        if not n.get("label"):
-            errors.append(f"map node {nid} needs a label")
-        if n.get("layer") not in LAYER_INDEX:
-            errors.append(f"map node {nid} has unknown layer: {n.get('layer')}")
-        if n.get("status", "unchanged") not in NODE_STATUSES:
-            errors.append(f"map node {nid} has invalid status: {n.get('status')}")
-        if n.get("group") and n["group"] not in seen:
-            errors.append(f"map node {nid} refers to unknown group: {n.get('group')}")
-        note = n.get("note")
-        if isinstance(note, str) and len(note) > 40:
-            warnings.append(f"map node {nid} note is long; keep notes to a few words")
-    for e in edges:
-        if e.get("from") not in node_ids or e.get("to") not in node_ids:
-            errors.append(f"map edge refers to unknown node: {e.get('from')} -> {e.get('to')}")
-    repo_root = Path(snapshot["params"]["repo"])
-    rank_of: dict[str, int] = {}
-    for n in nodes:
-        if n.get("layer") in LAYER_INDEX:
-            rank_of[n.get("id")] = LAYER_INDEX[n["layer"]][0]
-        ex = n.get("excerpt")
-        if ex is None:
-            continue
-        if not isinstance(ex, dict) or not isinstance(ex.get("path"), str) or not isinstance(ex.get("start"), int) or not isinstance(ex.get("end"), int) or ex["start"] < 1 or ex["end"] < ex["start"]:
-            errors.append(f"map node {n.get('id')} excerpt must be {{path, start, end}} with 1 <= start <= end")
-            continue
-        if not (repo_root / ex["path"]).is_file():
-            errors.append(f"map node {n.get('id')} excerpt file not found in the working tree: {ex['path']}")
-        elif ex["end"] - ex["start"] + 1 > EXCERPT_MAX_LINES:
-            warnings.append(f"map node {n.get('id')} excerpt spans {ex['end'] - ex['start'] + 1} lines; keep excerpts within {EXCERPT_MAX_LINES}")
-    touched = {e.get("from") for e in edges} | {e.get("to") for e in edges}
-    for n in nodes:
-        if n.get("status", "unchanged") != "unchanged" and n.get("id") not in touched:
-            warnings.append(f"map node {n.get('id')} is changed but has no edge; connect it to its caller or callee so the path stays continuous")
-    for e in edges:
-        a, b = rank_of.get(e.get("from")), rank_of.get(e.get("to"))
-        if a is None or b is None or a >= NON_CODE_RANK or b >= NON_CODE_RANK:
-            continue
-        if b - a > LAYER_SKIP_WARN:
-            warnings.append(f"map edge {e.get('from')} -> {e.get('to')} skips intermediate layers; add the pass-through nodes with an excerpt, or confirm the direct call")
-    if len(nodes) > MAP_NODE_BUDGET:
-        warnings.append(f"map has {len(nodes)} nodes; keep the main path within {MAP_NODE_BUDGET} and summarize the rest")
-    if len(edges) > MAP_EDGE_BUDGET:
-        warnings.append(f"map has {len(edges)} edges; keep within {MAP_EDGE_BUDGET}")
-    if nodes and not any(n.get("group") for n in nodes):
-        warnings.append("no map node links to a group; changed nodes should carry the slug of the group that explains them")
+    if review.get("map"):
+        validate_map(review.get("map") or {}, "map", snapshot, seen, errors, warnings)
+    validate_entries(review, snapshot, seen, errors, warnings)
     validate_data_flows(review, snapshot, seen, errors, warnings)
 
 
@@ -814,6 +932,17 @@ def compose_flows(review: dict, snapshot: dict) -> list[dict]:
     return out
 
 
+def left_out_note(counts: dict | None, locale: str) -> str | None:
+    docs, tests, generated = ((counts or {}).get(k, 0) for k in ("docs", "tests", "generated"))
+    if not docs and not tests and not generated:
+        return None
+    if locale == "en":
+        parts = [f"{docs} documentation files", f"{tests} test files"] + ([f"{generated} generated files"] if generated else [])
+        return ", ".join(parts[:-1]) + " and " + parts[-1] + " are not shown on this page"
+    parts = [f"ドキュメント {docs} ファイル", f"テスト {tests} ファイル"] + ([f"生成されたファイル {generated} ファイル"] if generated else [])
+    return ("、".join(parts[:-1]) + "と" + parts[-1] if len(parts) > 1 else parts[0]) + "は、この画面に含めていません"
+
+
 def compose_page_data(review: dict, snapshot: dict, snapshot_id: str, approved: list[str], editors: list[dict] | None = None, editor_default: str | None = None, approved_files: list[str] | None = None, exclude_approved: bool = False) -> dict:
     locale = review.get("locale", "ja")
     header = snapshot["header"]
@@ -835,7 +964,12 @@ def compose_page_data(review: dict, snapshot: dict, snapshot_id: str, approved: 
             approved_set.update(hunk_lookup[hid][0]["path"] for hid in (g.get("hunks", []) or []))
     groups_out = []
     for authored_index, g in enumerate(review["groups"]):
-        hunk_refs = sorted(g.get("hunks", []) or [], key=lambda hid: (file_rank(hunk_lookup[hid][0]["path"]), hunk_lookup[hid][2]))
+        reading_index = {p: i for i, p in enumerate(g.get("reading_order") or [])}
+
+        def reading_rank(path: str) -> tuple:
+            return (0, reading_index[path], ()) if path in reading_index else (1, 0, file_rank(path))
+
+        hunk_refs = sorted(g.get("hunks", []) or [], key=lambda hid: (reading_rank(hunk_lookup[hid][0]["path"]), hunk_lookup[hid][2]))
         hunk_notes = g.get("hunk_notes") or {}
         hunks_out = []
         files_out = []
@@ -860,6 +994,7 @@ def compose_page_data(review: dict, snapshot: dict, snapshot_id: str, approved: 
         entry = {
             "slug": g["slug"],
             "title": g["title"],
+            "trigger": g.get("trigger"),
             "outcome": g.get("outcome"),
             "why": g.get("why"),
             "contract": g.get("contract"),
@@ -883,6 +1018,7 @@ def compose_page_data(review: dict, snapshot: dict, snapshot_id: str, approved: 
     for e in groups_out:
         e.pop("_rank")
     present_layers = {info["layer"] for info in file_info.values()} | {n["layer"] for n in (review.get("map") or {}).get("nodes", []) or []}
+    present_layers |= {n["layer"] for en in review.get("entries", []) or [] for n in (en.get("map") or {}).get("nodes", []) or []}
     present_layers |= {st["layer"] for fl in review.get("data_flows", []) or [] for st in fl.get("stages", []) or []}
     layers_out = [{"key": key, "rank": rank, "ja": ja, "en": en} for key, rank, ja, en in LAYERS if key in present_layers]
     return {
@@ -899,12 +1035,15 @@ def compose_page_data(review: dict, snapshot: dict, snapshot_id: str, approved: 
             "counts": header["counts"],
             "generated_at": header["generated_at"],
             "identity_note": review.get("identity_note"),
+            "left_out_note": left_out_note(header.get("left_out_counts"), locale),
         },
         "summary": review.get("summary"),
         "checks": review.get("checks", []) or [],
         "blockers": review.get("blockers", []) or [],
         "layers": layers_out,
         "map": compose_map(review, snapshot),
+        "entries": [{"slug": en["slug"], "title": en["title"], "trigger": en.get("trigger"), "groups": list(en.get("groups") or []),
+                     "map": compose_map({"map": en.get("map") or {}}, snapshot)} for en in review.get("entries", []) or []],
         "data_flows": compose_flows(review, snapshot),
         "expected_groups": all_slugs,
         "expected_files": sorted(snap_files, key=file_rank),
@@ -928,6 +1067,8 @@ EDITOR_URL_TEMPLATES = {
 }
 EDITOR_LABELS = {"vscode": "VS Code", "vscode-insiders": "VS Code Insiders", "cursor": "Cursor", "rider": "Rider", "custom": "Custom"}
 EDITOR_PLACEHOLDERS = ("{path}", "{relpath}", "{relpath_url}")
+# A claude.ai Artifact page may be at most 16 MB rendered; editor links are local custom schemes that do nothing there.
+ARTIFACT_MAX_BYTES = 16_000_000
 
 
 def default_jetbrains_project(repo_root: str) -> str:
@@ -1085,14 +1226,22 @@ def cmd_build(args: argparse.Namespace) -> int:
     for p in approved_files:
         if p not in snap_paths:
             fail(f"unknown file in --approved-files: {p}")
-    editors, editor_default = resolve_editors(args.editor, args.editors, args.jetbrains_project or default_jetbrains_project(snapshot["header"]["repository"]))
+    if args.target == "artifact":
+        if args.editor not in ("vscode", "none"):
+            fail("--target artifact shows no editor links; drop --editor")
+        editors, editor_default = [], None
+    else:
+        editors, editor_default = resolve_editors(args.editor, args.editors, args.jetbrains_project or default_jetbrains_project(snapshot["header"]["repository"]))
     data = compose_page_data(review, snapshot, snapshot_id, approved, editors, editor_default, approved_files, args.exclude_approved)
     data["diagrams"] = diagrams
     template_path = args.template or str(Path(__file__).resolve().parent.parent / "assets" / "review-page.html")
     html = render_page(data, review, template_path)
+    size = len(html.encode("utf-8"))
+    if args.target == "artifact" and size > ARTIFACT_MAX_BYTES:
+        fail(f"the page is {size} bytes, over the {ARTIFACT_MAX_BYTES}-byte Artifact limit; build it with --target local and open it in the browser")
     out_path = Path(args.out)
     out_path.write_text(html, encoding="utf-8", newline="\n")
-    print(json.dumps({"out": args.out, "absolute": str(out_path.resolve()), "snapshot_id": snapshot_id, "short_id": snapshot_id[:12], "group_order": [g["slug"] for g in data["groups"]], "data_flows": [fl["slug"] for fl in data["data_flows"]], "diagrams": [d["slug"] for d in data["diagrams"]], "bytes": len(html.encode("utf-8")), "warnings": warnings}, ensure_ascii=False, indent=1))
+    print(json.dumps({"out": args.out, "absolute": str(out_path.resolve()), "target": args.target, "snapshot_id": snapshot_id, "short_id": snapshot_id[:12], "group_order": [g["slug"] for g in data["groups"]], "data_flows": [fl["slug"] for fl in data["data_flows"]], "diagrams": [d["slug"] for d in data["diagrams"]], "bytes": size, "warnings": warnings}, ensure_ascii=False, indent=1))
     return 0
 
 
@@ -1290,6 +1439,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--untracked", action="append", help="reviewed untracked file (repository-relative); repeatable")
     s.add_argument("--context", type=int, default=6, help="context lines around each change (default 6)")
     s.add_argument("--function-context", action="store_true", help="expand each hunk to the enclosing function")
+    s.add_argument("--include-docs-and-tests", action="store_true", help="keep documentation and test files on the page (by default they are left out; they always feed the snapshot id)")
+    s.add_argument("--include-generated", action="store_true", help="keep generated files (EF *.Designer.cs, *ModelSnapshot.cs, *.g.cs, *.generated.*) on the page")
+    s.add_argument("--leave-out", action="append", metavar="GLOB", help="also leave out repository-relative paths matching this glob as generated files (repeatable), e.g. **/idempotent.sql")
     s.add_argument("--out", required=True, help="output snapshot JSON path")
     s.set_defaults(func=cmd_snapshot)
 
@@ -1303,6 +1455,7 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--editor", default="vscode", help="editor selected until the reader picks another: vscode (default), vscode-insiders, cursor, rider, none, or a URL template with {path}, {relpath} or {relpath_url} and {line} or {line0}")
     b.add_argument("--editors", default="vscode,rider", help="comma-separated editors the page offers in its editor selector (default: vscode,rider)")
     b.add_argument("--jetbrains-project", help="project name for rider links (default: the single .sln/.slnx in the repository root, else the folder name)")
+    b.add_argument("--target", choices=("local", "artifact"), default="local", help="where the page opens: local (a file or localhost URL in the reader's browser, default) or artifact (published as a claude.ai Artifact: no editor links, size checked against the Artifact limit)")
     b.add_argument("--out", required=True, help="output HTML path")
     b.set_defaults(func=cmd_build)
 

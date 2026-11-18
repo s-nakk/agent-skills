@@ -109,4 +109,168 @@ class DataFlowValidation(unittest.TestCase):
         self.assertTrue(any('unknown group' in e for e in errors) and any('kind must be one of' in e for e in errors), errors)
 
 
+class LeftOutFiles(unittest.TestCase):
+    def test_documentation_paths_are_docs(self):
+        for path in ['README.md', 'Docs/System/Testing/test-map.md', 'docs/guide/setup.txt', 'design/flow.mmd', '.claude/rules/backend.md']:
+            self.assertEqual(tool.left_out_kind(path), 'docs', path)
+
+    def test_test_paths_are_tests(self):
+        for path in [
+            'App/BackgroundJobs/tests/BackgroundJobs.IntegrationTests/UseCases/FooTests.cs',
+            'App/Server.FunctionalTests/Helpers/Stub.cs',
+            'Test/TenantProvisioning/ScenarioBuilder/AreaBuilder.cs',
+            'src/__tests__/list.tsx',
+            'src/components/List.test.tsx',
+            'web/list.spec.ts',
+            'pkg/store_test.go',
+            'tools/test_parser.py',
+            'tests/conftest.py',
+        ]:
+            self.assertEqual(tool.left_out_kind(path), 'tests', path)
+
+    def test_production_paths_stay(self):
+        for path in [
+            'App/BackendShared/src/BackendShared.Core/Specifications/LatestBatteryBidProposalRetrievalSpec.cs',
+            'App/Server/src/Server.Web.DevOnly/Seed.cs',
+            'src/latest.py',
+            'App/Client/src/api/contestApi.ts',
+            'appsettings.json',
+        ]:
+            self.assertIsNone(tool.left_out_kind(path), path)
+
+    def snapshot(self, include):
+        files = [
+            dict(path='src/app.py', hunks=[dict(id='src/app.py#1', old_start=1, rows=[['+', None, 1, 'a']])]),
+            dict(path='docs/readme.md', hunks=[dict(id='docs/readme.md#1', old_start=1, rows=[['+', None, 1, 'b']])]),
+            dict(path='tests/test_app.py', hunks=[dict(id='tests/test_app.py#1', old_start=1, rows=[['+', None, 1, 'c']])]),
+        ]
+        args = argparse.Namespace(repo='.', base='HEAD', untracked=[], context=6, function_context=False, include_docs_and_tests=include, out='')
+        written = {}
+        with patch.object(tool, 'canonical_root', return_value='repo'), \
+             patch.object(tool, 'manifest_digest', return_value=('d' * 64, {'base_oid': 'b' * 40, 'head_oid': 'h' * 40})), \
+             patch.object(tool, 'extract_display_diff', return_value=files), \
+             patch.object(tool, 'working_tree_summary', return_value='clean'), \
+             patch.object(tool.Path, 'write_text', lambda self, text, encoding=None: written.setdefault('json', text)), \
+             contextlib.redirect_stdout(io.StringIO()):
+            tool.cmd_snapshot(args)
+        return json.loads(written['json'])
+
+    def test_snapshot_leaves_out_docs_and_tests_by_default(self):
+        snap = self.snapshot(include=False)
+        self.assertEqual([f['path'] for f in snap['files']], ['src/app.py'])
+        self.assertEqual(snap['left_out'], [dict(path='docs/readme.md', kind='docs'), dict(path='tests/test_app.py', kind='tests')])
+        self.assertEqual(snap['header']['left_out_counts'], dict(docs=1, tests=1, generated=0))
+        self.assertEqual(snap['header']['counts']['files'], 1)
+
+    def test_snapshot_keeps_everything_when_asked(self):
+        snap = self.snapshot(include=True)
+        self.assertEqual(len(snap['files']), 3)
+        self.assertEqual(snap['left_out'], [])
+
+    def test_page_note_names_both_counts(self):
+        self.assertEqual(tool.left_out_note(dict(docs=2, tests=5), 'ja'), 'ドキュメント 2 ファイルとテスト 5 ファイルは、この画面に含めていません')
+        self.assertIsNone(tool.left_out_note(dict(docs=0, tests=0), 'ja'))
+        self.assertIsNone(tool.left_out_note(None, 'en'))
+
+
+class ReadingOrder(unittest.TestCase):
+    PATHS = ['src/app/Handler.cs', 'src/domain/Entity.cs', 'src/app/Helper.cs']
+
+    def snapshot(self):
+        return dict(params=dict(repo='.'), header=dict(repository='r', base_ref='b', base_oid='b' * 40, head_oid='h' * 40, working_tree='clean', counts={}, generated_at='t'),
+                    files=[dict(path=p, status='modified', old_path=p, old_mode=None, new_mode=None, binary=False, submodule=None,
+                                hunks=[dict(id=f'{p}#1', header='', old_start=1, new_start=1, rows=[['+', None, 1, 'x']])]) for p in self.PATHS])
+
+    def review(self, **group):
+        layers = {'src/app/Handler.cs': 'application', 'src/domain/Entity.cs': 'domain', 'src/app/Helper.cs': 'application'}
+        g = dict(slug='flow', title='流れ', outcome='結果', hunks=[f'{p}#1' for p in self.PATHS])
+        g.update(group)
+        return dict(locale='ja', files=[dict(path=p, layer=l) for p, l in layers.items()], groups=[g])
+
+    def page_paths(self, review):
+        data = tool.compose_page_data(review, self.snapshot(), 'a' * 64, [])
+        return [f['path'] for f in data['groups'][0]['files']], data['groups'][0]
+
+    def test_without_reading_order_files_follow_layers(self):
+        paths, _ = self.page_paths(self.review())
+        self.assertEqual(paths, ['src/app/Handler.cs', 'src/app/Helper.cs', 'src/domain/Entity.cs'])
+
+    def test_reading_order_puts_each_callee_after_its_caller(self):
+        paths, group = self.page_paths(self.review(reading_order=['src/app/Handler.cs', 'src/domain/Entity.cs', 'src/app/Helper.cs'], trigger='毎朝 06:00 のタイマー'))
+        self.assertEqual(paths, ['src/app/Handler.cs', 'src/domain/Entity.cs', 'src/app/Helper.cs'])
+        self.assertEqual(group['trigger'], '毎朝 06:00 のタイマー')
+
+    def test_unlisted_files_follow_the_listed_ones(self):
+        paths, _ = self.page_paths(self.review(reading_order=['src/domain/Entity.cs']))
+        self.assertEqual(paths, ['src/domain/Entity.cs', 'src/app/Handler.cs', 'src/app/Helper.cs'])
+
+    def validate(self, review):
+        errors, warnings = [], []
+        tool.validate_review(review, self.snapshot(), errors, warnings)
+        return errors, warnings
+
+    def test_missing_reading_order_warns_for_a_wide_group(self):
+        _, warnings = self.validate(self.review())
+        self.assertTrue(any('no reading_order' in w for w in warnings), warnings)
+
+    def test_reading_order_must_name_files_of_the_group(self):
+        errors, _ = self.validate(self.review(reading_order=['src/app/Handler.cs', 'src/other.cs']))
+        self.assertTrue(any('no hunk in the group' in e for e in errors), errors)
+
+    def test_trigger_must_be_one_string(self):
+        errors, _ = self.validate(self.review(trigger=['a', 'b']))
+        self.assertTrue(any('trigger' in e for e in errors), errors)
+
+
+class Entries(unittest.TestCase):
+    def check(self, entries, groups=('first', 'second')):
+        errors, warnings = [], []
+        tool.validate_entries(dict(entries=entries), dict(params=dict(repo='.')), set(groups), errors, warnings)
+        return errors, warnings
+
+    def entry(self, slug, groups, nodes=None, edges=None):
+        nodes = nodes if nodes is not None else [dict(id=slug + '-n', label='Handler', layer='application', status='modified', group=groups[0])]
+        return dict(slug=slug, title=slug, groups=groups, map=dict(nodes=nodes, edges=edges or []))
+
+    def test_entries_that_cover_every_group_pass(self):
+        errors, warnings = self.check([self.entry('job', ['first']), self.entry('api', ['second'])])
+        self.assertEqual(errors, [])
+        self.assertFalse(any('in no entry' in w for w in warnings), warnings)
+
+    def test_entry_with_an_unknown_group_fails(self):
+        errors, _ = self.check([self.entry('job', ['first', 'missing']), self.entry('api', ['second'])])
+        self.assertTrue(any('unknown group: missing' in e for e in errors), errors)
+
+    def test_group_in_no_entry_warns(self):
+        _, warnings = self.check([self.entry('job', ['first'])])
+        self.assertTrue(any('group second is in no entry' in w for w in warnings), warnings)
+
+    def test_entry_map_is_validated_like_the_map(self):
+        bad = [dict(id='n', label='Handler', layer='nowhere', group='first')]
+        errors, _ = self.check([self.entry('job', ['first', 'second'], nodes=bad)])
+        self.assertTrue(any('entry job map node n has unknown layer' in e for e in errors), errors)
+
+    def test_duplicate_entry_slug_fails(self):
+        errors, _ = self.check([self.entry('job', ['first']), self.entry('job', ['second'])])
+        self.assertTrue(any('duplicate' in e for e in errors), errors)
+
+
+class GeneratedFiles(unittest.TestCase):
+    def test_ef_designer_and_model_snapshot_are_generated(self):
+        self.assertEqual(tool.left_out_kind('Data/Migrations/20261016_Add.Designer.cs'), 'generated')
+        self.assertEqual(tool.left_out_kind('Data/Migrations/AppDbContextModelSnapshot.cs'), 'generated')
+        self.assertIsNone(tool.left_out_kind('Data/Migrations/20261016_Add.cs'))
+
+    def test_leave_out_glob_marks_a_project_file_generated(self):
+        self.assertEqual(tool.left_out_kind('App/Data/Migrations/idempotent.sql', leave_out=['**/idempotent.sql']), 'generated')
+        self.assertIsNone(tool.left_out_kind('App/Data/Migrations/idempotent.sql'))
+
+    def test_include_generated_keeps_them(self):
+        self.assertIsNone(tool.left_out_kind('Data/Migrations/20261016_Add.Designer.cs', include_generated=True))
+
+    def test_page_note_names_the_generated_count(self):
+        self.assertEqual(tool.left_out_note(dict(docs=1, tests=2, generated=3), 'en'),
+                         '1 documentation files, 2 test files and 3 generated files are not shown on this page')
+
+
 if __name__=='__main__': unittest.main()
